@@ -14,33 +14,38 @@ DB lives at `./data/pantry.db` (override with `PANTRY_DB=/path/to.db`).
 
 ## Deploy on Unraid (Docker, from this repo)
 
-One-time setup in the Unraid web terminal:
+One-time setup in the Unraid web terminal (host port 61400, container port
+8080, joined to the `proxynet` network so the reverse proxy can reach it at
+`http://pantry-planner:8080`):
 
     mkdir -p /mnt/user/appdata/pantry-planner
     cd /mnt/user/appdata/pantry-planner
     git clone https://github.com/seancatchpole/pantry-planner src
     cd src && docker build -t pantry-planner .
+    docker network ls | grep -q proxynet || docker network create proxynet
     docker run -d --name pantry-planner \
-      -p 8017:8000 \
+      --network proxynet \
+      -p 61400:8080 \
       -v /mnt/user/appdata/pantry-planner/data:/data \
       --restart unless-stopped \
       pantry-planner
 
-UI at `http://<unraid>:8017`. The SQLite DB lives in
+Direct UI: `http://192.168.1.2:61400` (or via your reverse proxy pointing at
+`pantry-planner:8080`). The SQLite DB lives in
 `/mnt/user/appdata/pantry-planner/data/pantry.db` and survives rebuilds.
-To carry the prototype DB over, copy `data/pantry.db` into that data folder
-before first start.
 
 Upgrade cycle (after the agent pushes changes):
 
     cd /mnt/user/appdata/pantry-planner/src && git pull
     docker rm -f pantry-planner
     docker build -t pantry-planner . && docker run -d --name pantry-planner \
-      -p 8017:8000 -v /mnt/user/appdata/pantry-planner/data:/data \
+      --network proxynet -p 61400:8080 \
+      -v /mnt/user/appdata/pantry-planner/data:/data \
       --restart unless-stopped pantry-planner
 
 Unraid UI alternative: Docker > Add New Container from the `pantry-planner`
-image, Web UI port 8017, map `/data` to `/mnt/user/appdata/pantry-planner/data`.
+image, Web UI port 61400 (container 8080), extra args `--network proxynet`,
+map `/data` to `/mnt/user/appdata/pantry-planner/data`.
 
 ## API cheat sheet (used by the Hermes agent)
 
