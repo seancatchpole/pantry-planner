@@ -1,0 +1,7 @@
+# runtime data — never in the repo (personal inventory, recipes state)
+data/
+# python noise
+__pycache__/
+*.pyc
+server.log
+.env

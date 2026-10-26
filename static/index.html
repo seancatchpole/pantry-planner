@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Freezer & Pantry Planner</title>
+<style>
+  :root {
+    --bg: #0f1216; --panel: #171c22; --panel2: #1e242c; --border: #2a323d;
+    --text: #e6e9ed; --muted: #8b98a5; --accent: #4f8cff; --green: #3ecf8e;
+    --red: #ff6b6b; --amber: #f0b429;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         background: var(--bg); color: var(--text); }
+  header { display: flex; align-items: center; gap: 16px; padding: 14px 22px;
+           border-bottom: 1px solid var(--border); background: var(--panel); flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; }
+  nav { display: flex; gap: 6px; }
+  nav button, .btn { background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+         border-radius: 8px; padding: 7px 14px; cursor: pointer; font-size: 14px; }
+  nav button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.small { padding: 3px 9px; font-size: 13px; }
+  main { padding: 22px; max-width: 1100px; margin: 0 auto; }
+  .weeknav { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .card h3 { margin: 0 0 4px; font-size: 15px; }
+  .daylabel { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted); }
+  .badge.protein { color: var(--green); border-color: var(--green); }
+  .badge.kind-weekend { color: var(--amber); border-color: var(--amber); }
+  .badge.loc-pantry { color: var(--accent); } .badge.loc-freezer { color: #6cc4ff; } .badge.loc-fridge { color: #9ae6b4; }
+  .actions { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+  .thumb { font-size: 16px; background: var(--panel2); border: 1px solid var(--border);
+           border-radius: 8px; padding: 4px 10px; cursor: pointer; }
+  .thumb.up.on { border-color: var(--green); background: rgba(62,207,142,.15); }
+  .thumb.down.on { border-color: var(--red); background: rgba(255,107,107,.15); }
+  .cooked-tag { color: var(--green); font-size: 13px; }
+  details { margin-top: 8px; } summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  .steps { color: var(--muted); font-size: 13px; margin-top: 6px; line-height: 1.45; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+  tr.depleted td { color: var(--muted); text-decoration: line-through; }
+  input, select, textarea { background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+           border-radius: 8px; padding: 7px 10px; font-size: 14px; font-family: inherit; }
+  textarea { width: 100%; min-height: 90px; }
+  .formrow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+  #toast { position: fixed; bottom: 18px; right: 18px; background: var(--panel2); border: 1px solid var(--border);
+           border-radius: 10px; padding: 12px 16px; max-width: 380px; font-size: 13px; display: none; }
+  .muted { color: var(--muted); } .prefscore { font-size: 12px; }
+  .empty { color: var(--muted); padding: 24px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🧊 Freezer &amp; Pantry Planner</h1>
+  <nav>
+    <button id="tab-plan" class="active" onclick="showTab('plan')">This Week's Dinners</button>
+    <button id="tab-inventory" onclick="showTab('inventory')">Inventory</button>
+    <button id="tab-recipes" onclick="showTab('recipes')">Recipes</button>
+  </nav>
+  <span style="margin-left:auto" class="muted" id="summary"></span>
+</header>
+<main>
+  <!-- PLAN -->
+  <section id="page-plan">
+    <div class="weeknav">
+      <button class="btn" onclick="shiftWeek(-7)">← prev week</button>
+      <strong id="weeklabel"></strong>
+      <button class="btn" onclick="shiftWeek(7)">next week →</button>
+      <button class="btn primary" style="margin-left:auto" onclick="genPlan()">⚡ Auto-plan week</button>
+    </div>
+    <div class="grid" id="plangrid"></div>
+    <div class="card" style="margin-top:14px">
+      <h3>Add a specific dish to a night</h3>
+      <div class="formrow">
+        <input type="date" id="pick-date">
+        <select id="pick-recipe"></select>
+        <button class="btn primary" onclick="manualPlan()">Add</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- INVENTORY -->
+  <section id="page-inventory" style="display:none">
+    <div class="card" style="margin-bottom:14px">
+      <h3>➕ Add items (one per line: <span class="muted">qty name</span> or <span class="muted">name x2</span>)</h3>
+      <div class="formrow">
+        <label class="muted">Storage:</label>
+        <select id="receipt-loc"><option>pantry</option><option>freezer</option><option>fridge</option></select>
+        <label class="muted">Source:</label>
+        <input id="receipt-src" placeholder="e.g. Kroger 10/25" style="width:160px">
+      </div>
+      <textarea id="receipt-text" placeholder="2 whole chicken&#10;1 lb ground turkey&#10;frozen broccoli x3"></textarea>
+      <div class="formrow" style="margin-top:8px">
+        <button class="btn primary" onclick="submitReceipt()">Add to inventory</button>
+        <span class="muted">Tip: text me a photo of your receipt in Hermes chat and I'll add the trip for you.</span>
+      </div>
+    </div>
+    <table id="invtable">
+      <thead><tr><th>Item</th><th>Qty</th><th>Unit</th><th>Where</th><th>Source</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <!-- RECIPES -->
+  <section id="page-recipes" style="display:none">
+    <div class="grid" id="recipecards"></div>
+  </section>
+</main>
+<div id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+let weekStart = localStorage.getItem('weekStart') || null;
+let feedbackState = {};   // plan_id -> +1/-1 (this view)
+
+function toast(msg, ms=3500) {
+  const t = $('#toast'); t.innerHTML = msg; t.style.display = 'block';
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display='none', ms);
+}
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.detail || r.status);
+  return d;
+}
+function showTab(name) {
+  for (const p of ['plan','inventory','recipes']) {
+    $('#page-'+p).style.display = p===name ? '' : 'none';
+    $('#tab-'+p).classList.toggle('active', p===name);
+  }
+  ({plan: loadPlan, inventory: loadInventory, recipes: loadRecipes})[name]();
+  loadSummary();
+}
+function fmtDate(iso) {
+  const d = new Date(iso + 'T12:00:00');
+  return d.toLocaleDateString(undefined, {weekday:'short', month:'numeric', day:'numeric'});
+}
+function shiftWeek(days) {
+  const s = weekStart ? new Date(weekStart+'T12:00:00') : new Date();
+  s.setDate(s.getDate() + days);
+  weekStart = s.toISOString().slice(0,10);
+  localStorage.setItem('weekStart', weekStart);
+  loadPlan();
+}
+
+// ---------- plan ----------
+async function loadPlan() {
+  const q = weekStart ? '?week_start=' + weekStart : '';
+  const data = await api('/api/plan' + q);
+  weekStart = data.start; localStorage.setItem('weekStart', weekStart);
+  $('#weeklabel').textContent = fmtDate(data.start) + ' – ' + fmtDate(data.end);
+  $('#pick-date').value = data.start;
+  const grid = $('#plangrid'); grid.innerHTML = '';
+  const byDate = {}; data.meals.forEach(m => byDate[m.date] = m);
+  const s = new Date(data.start + 'T12:00:00');
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(s); d.setDate(d.getDate() + i);
+    const iso = d.toISOString().slice(0,10);
+    const m = byDate[iso];
+    const isWeekend = d.getDay() === 5 || d.getDay() === 6 || d.getDay() === 0;
+    const card = document.createElement('div'); card.className = 'card';
+    let inner = `<div class="daylabel">${fmtDate(iso)}${isWeekend ? ' · weekend' : ''}</div>`;
+    if (!m) {
+      inner += `<div class="empty" style="padding:14px 0">nothing planned — hit ⚡ Auto-plan or add below</div>`;
+    } else {
+      const r = m.recipe;
+      const on = feedbackState[m.plan_id];
+      inner += `<h3>${r.name}</h3>
+        <div class="badges">
+          <span class="badge ${r.kind==='weekend' ? 'kind-weekend':''}">${r.kind}</span>
+          <span class="badge protein">~${Math.round(r.protein_per_serving)}g protein</span>
+          <span class="badge">⏱ ${r.minutes} min</span>
+          <span class="badge">serves ${r.servings}</span>
+          ${r.preference && r.preference.n ? `<span class="badge prefscore">👍${r.preference.ups} 👎${r.preference.downs}</span>` : ''}
+        </div>
+        <details><summary>ingredients &amp; steps</summary>
+          <ul class="steps">${r.ingredients.map(x=>`<li>${x.qty} ${x.unit} ${x.name}</li>`).join('')}</ul>
+          <div class="steps">${r.steps}</div></details>
+        <div class="actions">
+          <button class="thumb up ${on===1?'on':''}" onclick="vote(${m.plan_id},1)">👍</button>
+          <button class="thumb down ${on===-1?'on':''}" onclick="vote(${m.plan_id},-1)">👎</button>
+          ${m.status==='cooked'
+            ? `<span class="cooked-tag">✔ cooked ${m.cooked_at ? m.cooked_at.slice(0,10) : ''}</span>`
+            : `<button class="btn small primary" onclick="cook(${m.plan_id})">Made it — deduct pantry</button>`}
+          ${m.status==='planned' ? `<button class="btn small" title="remove" onclick="unplan(${m.plan_id})">✕</button>` : ''}
+        </div>`;
+    }
+    card.innerHTML = inner;
+    grid.appendChild(card);
+  }
+  populateRecipePicker();
+}
+async function vote(planId, thumbs) {
+  const m = (await api('/api/plan' + (weekStart?'?week_start='+weekStart:''))).meals.find(x=>x.plan_id===planId);
+  await api('/api/feedback', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({recipe_id: m.recipe.id, thumbs})});
+  feedbackState[planId] = thumbs;
+  toast('Feedback saved — I\'ll weigh it when planning 🧠');
+  loadPlan();
+}
+async function cook(planId) {
+  if (!confirm('Mark as made? Ingredients will be deducted from inventory.')) return;
+  const res = await api(`/api/plan/${planId}/cook`, {method:'POST'});
+  let msg = `✔ ${res.recipe} — deducted ${res.deducted.length} items.`;
+  if (res.shortages.length)
+    msg += `<br><span style="color:var(--amber)">Short: ${res.shortages.map(s=>s.still_needed+' '+s.item).join(', ')}</span>`;
+  toast(msg, 6000);
+  loadPlan();
+}
+async function unplan(planId) {
+  await api(`/api/plan/${planId}`, {method:'DELETE'}); loadPlan();
+}
+async function genPlan() {
+  const res = await api('/api/plan/generate' + (weekStart?'?week_start='+weekStart:''), {method:'POST'});
+  toast(res.filled.length ? `Planned: ${res.filled.map(f=>f.date.slice(5)+' '+f.recipe).join(' · ')}` : 'Week already full.');
+  loadPlan();
+}
+async function populateRecipePicker() {
+  const recs = await api('/api/recipes');
+  $('#pick-recipe').innerHTML = recs.map(r =>
+    `<option value="${r.id}">[${r.kind}] ${r.name}</option>`).join('');
+}
+async function manualPlan() {
+  const date = $('#pick-date').value, rid = $('#pick-recipe').value;
+  if (!date) return toast('Pick a date');
+  await api('/api/plan', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({date, recipe_id: +rid})});
+  loadPlan();
+}
+
+// ---------- inventory ----------
+async function loadInventory() {
+  const items = await api('/api/inventory');
+  const tb = $('#invtable tbody'); tb.innerHTML = '';
+  if (!items.length) tb.innerHTML = '<tr><td colspan="6" class="empty">empty — add a grocery trip above or send me a receipt photo</td></tr>';
+  for (const it of items) {
+    const tr = document.createElement('tr');
+    if (it.qty <= 0) tr.className = 'depleted';
+    tr.innerHTML = `<td>${it.name}</td>
+      <td>${+it.qty.toFixed(2)}</td><td>${it.unit||''}</td>
+      <td><span class="badge loc-${it.location}">${it.location}</span></td>
+      <td class="muted">${it.source||''}</td>
+      <td>
+        <button class="btn small" onclick="bump(${it.id}, 1)">+</button>
+        <button class="btn small" onclick="bump(${it.id}, -1)">−</button>
+        <button class="btn small" onclick="delItem(${it.id})">🗑</button>
+      </td>`;
+    tb.appendChild(tr);
+  }
+}
+async function bump(id, d) {
+  const items = await api('/api/inventory'); const it = items.find(x=>x.id===id);
+  it.qty = Math.max(0, it.qty + d);
+  await api('/api/inventory/'+id, {method:'PATCH', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(it)});
+  loadInventory();
+}
+async function delItem(id) { await api('/api/inventory/'+id, {method:'DELETE'}); loadInventory(); }
+function parseReceiptLine(line) {
+  line = line.trim(); if (!line) return null;
+  let m = line.match(/^(\d+(?:\.\d+)?)\s*(?:x\s*)?(.+)$/);      // "2 chicken breast"
+  if (m) return {name: m[2], qty: parseFloat(m[1])};
+  m = line.match(/^(.+?)\s*x\s*(\d+(?:\.\d+)?)$/);              // "chicken breast x2"
+  if (m) return {name: m[1], qty: parseFloat(m[2])};
+  return {name: line, qty: 1};
+}
+async function submitReceipt() {
+  const loc = $('#receipt-loc').value, src = $('#receipt-src').value;
+  const lines = $('#receipt-text').value.split('\n').map(parseReceiptLine).filter(Boolean);
+  if (!lines.length) return toast('Nothing to add');
+  const res = await api('/api/receipt', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({source: src, items: lines.map(l => ({...l, location: loc}))})});
+  toast(`Added/merged ${res.added_or_merged} items.`);
+  $('#receipt-text').value = ''; loadInventory(); loadSummary();
+}
+
+// ---------- recipes ----------
+async function loadRecipes() {
+  const recs = await api('/api/recipes');
+  const grid = $('#recipecards'); grid.innerHTML = '';
+  for (const r of recs) {
+    const p = r.preference || {};
+    const card = document.createElement('div'); card.className = 'card';
+    card.innerHTML = `<h3>${r.name}</h3>
+      <div class="badges">
+        <span class="badge ${r.kind==='weekend'?'kind-weekend':''}">${r.kind}</span>
+        <span class="badge protein">~${Math.round(r.protein_per_serving)}g</span>
+        <span class="badge">⏱ ${r.minutes} min</span>
+        ${p.n ? `<span class="badge prefscore">family: 👍${p.ups} 👎${p.downs}</span>` : ''}
+        ${r.tags.map(t=>`<span class="badge">#${t}</span>`).join('')}
+      </div>
+      <details><summary>ingredients &amp; steps</summary>
+        <ul class="steps">${r.ingredients.map(x=>`<li>${x.qty} ${x.unit} ${x.name}</li>`).join('')}</ul>
+        <div class="steps">${r.steps}</div></details>`;
+    grid.appendChild(card);
+  }
+}
+async function loadSummary() {
+  try {
+    const s = await api('/api/summary');
+    $('#summary').textContent = `${s.inventory_items} items in stock` +
+      (s.depleted_items ? ` · ${s.depleted_items} depleted` : '');
+  } catch(e) {}
+}
+loadPlan(); loadSummary();
+</script>
+</body>
+</html>
