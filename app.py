@@ -4,6 +4,7 @@ import os
 import random
 import re
 import sqlite3
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -17,7 +18,14 @@ DB_PATH = Path(os.environ.get("PANTRY_DB", BASE / "data" / "pantry.db"))
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 MIN_WEEKNIGHT_PROTEIN = float(os.environ.get("MIN_WEEKNIGHT_PROTEIN", 30))
 
-app = FastAPI(title="Pantry Planner")
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # Mounted ASGI applications do not run their own lifespan handlers.
+    async with pantry_mcp.session_manager.run():
+        yield
+
+
+app = FastAPI(title="Pantry Planner", lifespan=lifespan)
 
 
 def db():
@@ -333,14 +341,18 @@ def get_plan(week_start: str | None = None):
     end = start + timedelta(days=6)
     conn = db()
     rows = conn.execute(
-        "SELECT p.id, p.date, p.status, p.cooked_at, r.* "
+        "SELECT p.id AS plan_id, p.date, p.status, p.cooked_at, r.* "
         "FROM plan p JOIN recipes r ON r.id = p.recipe_id "
         "WHERE p.date BETWEEN ? AND ? ORDER BY p.date", (start.isoformat(), end.isoformat())).fetchall()
     conn.close()
     meals = []
+    prefs = preference_map()
     for r in rows:
         rec = recipe_dict(r)
-        meals.append({"plan_id": r["id"], "date": r["date"], "status": r["status"],
+        for key in ("plan_id", "date", "status", "cooked_at"):
+            rec.pop(key, None)
+        rec["preference"] = prefs.get(rec["id"], {})
+        meals.append({"plan_id": r["plan_id"], "date": r["date"], "status": r["status"],
                       "cooked_at": r["cooked_at"], "recipe": rec})
     return {"start": start.isoformat(), "end": end.isoformat(), "meals": meals}
 
@@ -348,6 +360,15 @@ def get_plan(week_start: str | None = None):
 @app.post("/api/plan")
 def add_plan(p: PlanIn):
     conn = db()
+    existing = conn.execute(
+        "SELECT id, recipe_id FROM plan WHERE date=? AND slot='dinner'",
+        (p.date,),
+    ).fetchone()
+    if existing:
+        conn.close()
+        if existing["recipe_id"] == p.recipe_id:
+            return {"added": existing["id"], "existing": True}
+        raise HTTPException(409, "a dinner is already planned for this date")
     cur = conn.execute("INSERT INTO plan(date,recipe_id) VALUES(?,?)", (p.date, p.recipe_id))
     conn.commit()
     conn.close()
@@ -529,3 +550,18 @@ app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 @app.get("/")
 def index():
     return FileResponse(BASE / "static" / "index.html")
+
+
+# MCP tools reuse the existing API's business logic and SQLite database.
+# Keep the initial tool surface read-only for safe scheduled planning.
+from mcp_server import make_mcp_server
+
+pantry_mcp = make_mcp_server(
+    list_inventory=list_inventory,
+    list_recipes=list_recipes,
+    get_plan=get_plan,
+    preferences=preferences,
+    shopping_list=shopping_list,
+)
+# The canonical MCP URL is /mcp/ (including the trailing slash).
+app.mount("/mcp", pantry_mcp.streamable_http_app())
