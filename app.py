@@ -248,6 +248,36 @@ def add_recipe(r: RecipeIn):
     return {"added": cur.lastrowid, "name": r.name}
 
 
+@app.patch("/api/recipes/{recipe_id}")
+def update_recipe(recipe_id: int, r: RecipeIn):
+    conn = db()
+    if not conn.execute("SELECT 1 FROM recipes WHERE id=?", (recipe_id,)).fetchone():
+        conn.close()
+        raise HTTPException(404, "recipe not found")
+    conn.execute(
+        "UPDATE recipes SET name=?,kind=?,minutes=?,servings=?,protein_per_serving=?,"
+        "ingredients=?,steps=?,tags=? WHERE id=?",
+        (r.name, r.kind, r.minutes, r.servings, r.protein_per_serving,
+         json.dumps(r.ingredients), r.steps, ",".join(r.tags), recipe_id))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@app.delete("/api/recipes/{recipe_id}")
+def delete_recipe(recipe_id: int):
+    conn = db()
+    used = conn.execute("SELECT 1 FROM plan WHERE recipe_id=? LIMIT 1", (recipe_id,)).fetchone()
+    if used:
+        conn.close()
+        raise HTTPException(409, "recipe is in the current plan; remove that plan day first")
+    conn.execute("DELETE FROM recipes WHERE id=?", (recipe_id,))
+    conn.execute("DELETE FROM feedback WHERE recipe_id=?", (recipe_id,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
 # ---------------- feedback ----------------
 
 class FeedbackIn(BaseModel):
