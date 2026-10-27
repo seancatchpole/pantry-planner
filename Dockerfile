@@ -2,7 +2,7 @@ FROM python:3.12-slim
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY app.py seed_data.py .
+COPY app.py mcp_server.py seed_data.py .
 COPY static/ static/
 ENV PANTRY_DB=/data/pantry.db
 VOLUME /data
