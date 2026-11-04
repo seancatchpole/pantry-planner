@@ -65,9 +65,9 @@ function metaDetails(title, parent, rows) {
 }
 async function recipeDetail(id) {
   try {
-    const r = await api('/api/recipes/' + id), m = r.metadata || {}, panel = $('#recipe-detail');
-    panel.replaceChildren(); panel.style.display = '';
-    const close = node('button', 'Close detail', panel, 'btn'); close.onclick = () => panel.style.display = 'none';
+    const r = await api('/api/recipes/' + id), m = r.metadata || {}, modal = $('#recipe-modal'), panel = $('#recipe-detail');
+    panel.replaceChildren(); modal.style.display = 'flex';
+    const close = node('button', '✕ Close (Esc)', panel, 'btn'); close.onclick = () => modal.style.display = 'none';
     sourceHeader(r, panel);
     node('h4', 'Ingredients', panel);
     if ((m.ingredient_sections || []).length) {
@@ -89,9 +89,11 @@ async function recipeDetail(id) {
     metaDetails('Videos', panel, (m.video || []).map(v => ['', [v && v.name, v && v.uploadDate ? `(${String(v.uploadDate).slice(0, 10)})` : ''].filter(Boolean).join(' ')]));
     metaDetails('Tips', panel, (Array.isArray(m.tips) ? m.tips : [m.tips]).filter(Boolean).map(t => ['', typeof t === 'string' ? t : JSON.stringify(t)]));
     metaDetails('Dates', panel, m.dates && [['Published', String(m.dates.datePublished || '').slice(0, 10)], ['Modified', String(m.dates.dateModified || '').slice(0, 10)]]);
-    panel.scrollIntoView({behavior:'smooth'});
+    panel.scrollTop = 0;
   } catch(e) { toast(e.message); }
 }
+document.addEventListener?.('click', e => { if (e.target?.id === 'recipe-modal') $('#recipe-modal').style.display = 'none'; });
+document.addEventListener?.('keydown', e => { if (e.key === 'Escape') $('#recipe-modal').style.display = 'none'; });
 async function previewImport() {
   importPreview = null; $('#import-save').disabled = true;
   try {
