@@ -734,6 +734,16 @@ def summary():
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 
 
+@app.middleware("http")
+async def no_cache_ui(request, call_next):
+    """UI files change with every deploy; force browsers to revalidate (etag-matched,
+    cheap on LAN) so a stale cached recipes.js can never mismatch a new index.html."""
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 @app.get("/")
 def index():
     return FileResponse(BASE / "static" / "index.html")
