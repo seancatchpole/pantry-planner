@@ -54,6 +54,12 @@ map `/data` to `/mnt/user/appdata/pantry-planner/data`.
 - `POST /api/plan/generate?week_start=YYYY-MM-DD` — fills missing dinners (Mon–Thu: weeknight recipes, protein ≥ 30g; Fri–Sun: weekend). Scores: 👍−👎 ×3 + pantry coverage ×2 − recently-cooked penalty
 - `POST /api/plan/{id}/cook` — deducts ingredients, logs consumption, returns shortages
 - `POST /api/feedback` — `{recipe_id, thumbs: 1|-1, note}`
+- **Shopping list (interactive):**
+  - `POST /api/shopping/generate?week_start=` — rebuild auto rows from the week's planned meals minus stock; manual rows and checked-off rows survive a rebuild
+  - `GET /api/shopping?week_start=` — rows with computed `aisle` (Produce / Meat & Seafood / Dairy & Eggs / Frozen / Bakery / Spices & Condiments / Pantry)
+  - `POST /api/shopping` — manual add `{name, qty, unit, hint}`; `PATCH /api/shopping/{id}` `{checked}`; `DELETE /api/shopping/{id}`
+  - `POST /api/shopping/purchase?week_start=` — checked rows move into inventory (exact-name merge only, location from hint/aisle) — the store-trip loop closes here
+  - `GET /api/shoppinglist` — computed shortages (unchanged contract, used by MCP `get_shopping_list`)
 - `POST /api/recipes` — add a legacy/manual recipe; prefer direct internet imports, then fallback sources. Generated recipes are allowed but less preferred.
 
 ## ChatGPT MCP (read-only initial integration)

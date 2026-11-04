@@ -75,6 +75,7 @@
   <nav>
     <button id="tab-plan" class="active" onclick="showTab('plan')">This Week's Dinners</button>
     <button id="tab-inventory" onclick="showTab('inventory')">Inventory</button>
+    <button id="tab-shopping" onclick="showTab('shopping')">Shopping</button>
     <button id="tab-recipes" onclick="showTab('recipes')">Recipes</button>
   </nav>
   <span style="margin-left:auto" class="muted" id="summary"></span>
@@ -119,6 +120,26 @@
       <thead><tr><th>Item</th><th>Qty</th><th>Unit</th><th>Where</th><th>Source</th><th></th></tr></thead>
       <tbody></tbody>
     </table>
+  </section>
+
+  <!-- SHOPPING -->
+  <section id="page-shopping" style="display:none">
+    <div class="card" style="margin-bottom:14px">
+      <div class="formrow">
+        <button class="btn primary" onclick="genShopping()">↻ Build list from plan</button>
+        <button class="btn" onclick="purchaseShopping()">🛒 Bought it — add to inventory</button>
+        <span class="muted" id="shopmeta"></span>
+      </div>
+      <p class="muted">Built from this week's planned meals minus what's in stock. Check items off in the store;
+      "Bought it" moves the checked items into inventory. Manual additions and checked rows survive a rebuild.</p>
+      <div class="formrow">
+        <input id="shop-name" placeholder="add item, e.g. milk" style="flex:1">
+        <input id="shop-qty" placeholder="qty" style="width:70px" type="number" step="any" min="0">
+        <select id="shop-hint"><option value="">auto aisle</option><option>pantry</option><option>fridge</option><option>freezer</option></select>
+        <button class="btn" onclick="addShopping()">Add</button>
+      </div>
+    </div>
+    <div id="shoplist"></div>
   </section>
 
   <!-- RECIPES -->
@@ -166,11 +187,11 @@ async function api(path, opts) {
   return d;
 }
 function showTab(name) {
-  for (const p of ['plan','inventory','recipes']) {
+  for (const p of ['plan','inventory','shopping','recipes']) {
     $('#page-'+p).style.display = p===name ? '' : 'none';
     $('#tab-'+p).classList.toggle('active', p===name);
   }
-  ({plan: loadPlan, inventory: loadInventory, recipes: loadRecipes})[name]();
+  ({plan: loadPlan, inventory: loadInventory, shopping: loadShopping, recipes: loadRecipes})[name]();
   loadSummary();
 }
 function fmtDate(iso) {
@@ -314,6 +335,68 @@ async function submitReceipt() {
     body: JSON.stringify({source: src, items: lines.map(l => ({...l, location: loc}))})});
   toast(`Added/merged ${res.added_or_merged} items.`);
   $('#receipt-text').value = ''; loadInventory(); loadSummary();
+}
+
+// ---------- shopping ----------
+const AISLE_ORDER = ['Produce','Meat & Seafood','Dairy & Eggs','Frozen','Bakery','Spices & Condiments','Pantry','Other'];
+async function loadShopping() {
+  const q = weekStart ? '?week_start=' + weekStart : '';
+  const data = await api('/api/shopping' + q);
+  const items = data.items;
+  const todo = items.filter(i => !i.checked).length;
+  const done = items.length - todo;
+  $('#shopmeta').textContent = items.length ? `${todo} to buy${done ? ` · ${done} checked off` : ''}` : '';
+  const wrap = $('#shoplist'); wrap.innerHTML = '';
+  if (!items.length) {
+    wrap.innerHTML = '<div class="empty" style="padding:14px">nothing yet — hit “Build list from plan” or add items above</div>';
+    return;
+  }
+  const byAisle = {};
+  items.forEach(i => (byAisle[i.aisle] ||= []).push(i));
+  for (const aisle of AISLE_ORDER.filter(a => byAisle[a]).concat(Object.keys(byAisle).filter(a => !AISLE_ORDER.includes(a)))) {
+    const h = document.createElement('h3'); h.style.margin = '14px 0 6px'; h.textContent = aisle; wrap.appendChild(h);
+    for (const it of byAisle[aisle]) {
+      const row = document.createElement('div'); row.className = 'card';
+      row.style = 'display:flex;align-items:center;gap:10px;padding:8px 12px;margin-bottom:6px';
+      const qtyTxt = it.note === 'to taste' ? it.note : `${+Number(it.qty).toFixed(2)}${it.unit ? ' ' + it.unit : ''}`;
+      row.innerHTML = `<input type="checkbox" ${it.checked ? 'checked' : ''} onchange="toggleShop(${it.id}, this.checked)" aria-label="${esc(it.name)}">
+        <span style="${it.checked ? 'text-decoration:line-through;opacity:.55' : ''}">${esc(it.name)}</span>
+        <span class="muted">${esc(qtyTxt)}</span>
+        <span class="badge">${it.source === 'gap' ? 'from plan' : 'manual'}</span>
+        <button class="btn small" style="margin-left:auto" title="remove" onclick="delShop(${it.id})">✕</button>`;
+      wrap.appendChild(row);
+    }
+  }
+}
+async function toggleShop(id, checked) {
+  await api('/api/shopping/' + id, {method:'PATCH', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({checked})});
+  loadShopping();
+}
+async function delShop(id) { await api('/api/shopping/' + id, {method:'DELETE'}); loadShopping(); }
+async function addShopping() {
+  const name = $('#shop-name').value.trim();
+  if (!name) return toast('Type an item name first');
+  const qty = parseFloat($('#shop-qty').value); 
+  await api('/api/shopping' + (weekStart ? '?week_start=' + weekStart : ''), {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name, qty: isNaN(qty) ? 1 : qty, hint: $('#shop-hint').value === 'auto aisle' ? '' : $('#shop-hint').value})});
+  $('#shop-name').value = ''; $('#shop-qty').value = '';
+  loadShopping();
+}
+async function genShopping() {
+  const res = await api('/api/shopping/generate' + (weekStart ? '?week_start=' + weekStart : ''), {method:'POST'});
+  toast(res.generated ? `Built ${res.generated} items from this week's plan` + (res.manual_kept ? ` (kept ${res.manual_kept} manual)` : '') : 'No gaps — plan is covered by what you have.');
+  loadShopping();
+}
+async function purchaseShopping() {
+  const checked = await api('/api/shopping' + (weekStart ? '?week_start=' + weekStart : ''));
+  const n = checked.items.filter(i => i.checked).length;
+  if (!n) return toast('Check items off first — nothing to move to inventory.');
+  if (!confirm(`Move ${n} checked-off item${n>1?'s':''} into inventory?`)) return;
+  const res = await api('/api/shopping/purchase' + (weekStart ? '?week_start=' + weekStart : ''), {method:'POST'});
+  toast(`🛒 ${res.added.length} items added to inventory.`);
+  loadShopping(); loadSummary();
 }
 
 // Rich recipe browser lives in /static/recipes.js.

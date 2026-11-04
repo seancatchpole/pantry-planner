@@ -84,6 +84,19 @@ def init_db():
             recipe_id INTEGER NOT NULL REFERENCES recipes(id),
             date TEXT DEFAULT (date('now'))
         );
+        CREATE TABLE IF NOT EXISTS shopping_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            week_start TEXT NOT NULL,
+            name TEXT NOT NULL,
+            qty REAL DEFAULT 1,
+            unit TEXT DEFAULT '',
+            hint TEXT DEFAULT '',
+            note TEXT DEFAULT '',
+            source TEXT DEFAULT 'gap',
+            checked INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_shopping_week ON shopping_items(week_start);
         """
     )
     from recipe_import import migrate
@@ -714,18 +727,15 @@ def mark_cooked(plan_id: int):
     return {"ok": True, "recipe": row["name"], "deducted": deducted, "shortages": shortages}
 
 
-@app.get("/api/shoppinglist")
-def shopping_list(week_start: str | None = None):
-    """Net ingredients needed for the week's planned (not yet cooked) meals, minus stock."""
-    start = date.fromisoformat(week_start) if week_start else monday_of(date.today())
+def compute_gaps(conn, start: date):
+    """Net ingredients needed for the week's planned (not yet cooked) meals, minus stock.
+    Returns (meal_count, [{item, need_total, have, buy, unit, hint}])."""
     end = start + timedelta(days=6)
-    conn = db()
     meals = conn.execute(
         "SELECT p.status, r.ingredients FROM plan p JOIN recipes r ON r.id=p.recipe_id "
         "WHERE p.date BETWEEN ? AND ? AND p.status='planned'", (start.isoformat(), end.isoformat())).fetchall()
     inv = conn.execute("SELECT name, qty FROM inventory").fetchall()
-    conn.close()
-    need = []  # [(name, qty, unit)]
+    need = []  # [(name, qty, unit, hint)]
     for m in meals:
         for ing in json.loads(m["ingredients"]):
             name, qty = ing.get("name", ""), float(ing.get("qty", 0) or 0)
@@ -734,22 +744,187 @@ def shopping_list(week_start: str | None = None):
             for slot in need:
                 if similar(slot[0], name):
                     slot[1] += qty
+                    if not slot[3] and ing.get("hint"):
+                        slot[3] = ing["hint"]
                     break
             else:
-                need.append([name, qty, ing.get("unit", "")])
+                need.append([name, qty, ing.get("unit", ""), ing.get("hint", "")])
     out = []
-    for name, qty, unit in need:
+    for name, qty, unit, hint in need:
         have = sum(r["qty"] for r in inv if similar(name, r["name"]))
         short = qty - have
         if qty <= 0:  # "to taste" / unspecified quantity
             if have > 0:
                 continue
-            out.append({"item": name, "need_total": 0, "have": 0, "buy": "some", "unit": unit})
+            out.append({"item": name, "need_total": 0, "have": 0, "buy": "some", "unit": unit, "hint": hint})
         elif short > 1e-9:
             out.append({"item": name, "need_total": round(qty, 2), "have": round(have, 2),
-                        "buy": round(short, 2), "unit": unit})
+                        "buy": round(short, 2), "unit": unit, "hint": hint})
     out.sort(key=lambda x: x["item"].lower())
-    return {"week_start": start.isoformat(), "meals": len(meals), "items": out}
+    return len(meals), out
+
+
+@app.get("/api/shoppinglist")
+def shopping_list(week_start: str | None = None):
+    """Computed view: what the current plan still needs (no persistence)."""
+    start = date.fromisoformat(week_start) if week_start else monday_of(date.today())
+    conn = db()
+    try:
+        meals, gaps = compute_gaps(conn, start)
+    finally:
+        conn.close()
+    return {"week_start": start.isoformat(), "meals": meals,
+            "items": [{k: g[k] for k in ("item", "need_total", "have", "buy", "unit")} for g in gaps]}
+
+
+# ---------------- interactive shopping list ----------------
+
+AISLE_RULES = [
+    # false-positive guards first: "chicken broth" and "egg noodles" are pantry, not meat/dairy
+    (r"broth|stock|\bnoodles?\b|\bpasta\b|spaghetti|pappardelle|macaroni|\brice\b|quinoa|polenta|"
+     r"oats?|\bflour\b|cornstarch|\bbeans\b|lentils|\bgnocchi\b|\byeast\b|cereal|\bcocoa\b", "Pantry"),
+    (r"\btortillas?\b|bread|buns?\b|pita|pretzel buns", "Bakery"),
+    (r"chicken|beef|pork|lamb|turkey|sausage|kielbasa|brisket|steak|\bribs?\b|thighs?\b|wings?\b|"
+     r"\bbreasts?\b|ground |shrimp|salmon|\bfish\b|tuna|\bcod\b|bacon|pancetta|meatballs?", "Meat & Seafood"),
+    (r"\boil\b|vinegar|soy sauce|\bsalsa\b|spice|cumin|paprika|chili (powder|flakes)|oregano|honey|"
+     r"mustard|mayo|ketchup|seasoning|pepper flakes|bay leaf|cinnamon|cornstarch", "Spices & Condiments"),
+    (r"peppers?|onion|garlic|lemon|lime|cucumber|tomato|carrot|potato|lettuce|romaine|ginger|thyme|"
+     r"celery|mushroom|banana|apple|cabbage|scallion|cilantro|parsley|basil|broccoli|cauliflower|"
+     r"spinach|\bpeas\b|asparagus|avocado|zucchini", "Produce"),
+    (r"cheese|yogurt|butter|\bmilk\b|\bcream\b|feta|parmesan|\begg\b|\beggs\b", "Dairy & Eggs"),
+]
+
+
+def aisle_of(name: str, hint: str = "") -> str:
+    """Store-aisle guess for grouping the shopping list."""
+    n = norm(name)
+    if hint == "freezer" or "frozen" in n:
+        return "Frozen"
+    for rx, aisle in AISLE_RULES:
+        if re.search(rx, n):
+            return aisle
+    return "Dairy & Eggs" if hint == "fridge" else "Pantry"
+
+
+class ShoppingIn(BaseModel):
+    name: str
+    qty: float = 1
+    unit: str = ""
+    hint: str = ""            # expected storage: pantry | fridge | freezer
+    note: str = ""
+    week_start: str | None = None
+
+
+class ShoppingPatch(BaseModel):
+    checked: bool
+
+
+def _shop_week(week_start: str | None) -> date:
+    return date.fromisoformat(week_start) if week_start else monday_of(date.today())
+
+
+@app.get("/api/shopping")
+def shopping_get(week_start: str | None = None):
+    start = _shop_week(week_start)
+    conn = db()
+    rows = conn.execute(
+        "SELECT * FROM shopping_items WHERE week_start=? ORDER BY checked, name",
+        (start.isoformat(),)).fetchall()
+    conn.close()
+    items = [{**dict(r), "aisle": aisle_of(r["name"], r["hint"])} for r in rows]
+    return {"week_start": start.isoformat(), "items": items}
+
+
+@app.post("/api/shopping/generate")
+def shopping_generate(week_start: str | None = None):
+    """Rebuild auto gap rows from the current plan; manual rows and checked-off rows persist."""
+    start = _shop_week(week_start)
+    conn = db()
+    try:
+        _, gaps = compute_gaps(conn, start)
+        conn.execute("DELETE FROM shopping_items WHERE week_start=? AND source='gap' AND checked=0",
+                     (start.isoformat(),))
+        for g in gaps:
+            conn.execute(
+                "INSERT INTO shopping_items(week_start,name,qty,unit,hint,note,source) VALUES(?,?,?,?,?,?, 'gap')",
+                (start.isoformat(), g["item"],
+                 1 if g["buy"] == "some" else g["buy"], g["unit"], g["hint"],
+                 "to taste" if g["buy"] == "some" else ""))
+        conn.commit()
+        n = conn.execute("SELECT COUNT(*) FROM shopping_items WHERE week_start=? AND source='gap'",
+                         (start.isoformat(),)).fetchone()[0]
+        manual = conn.execute("SELECT COUNT(*) FROM shopping_items WHERE week_start=? AND source='manual'",
+                              (start.isoformat(),)).fetchone()[0]
+        return {"week_start": start.isoformat(), "generated": n, "manual_kept": manual}
+    finally:
+        conn.close()
+
+
+@app.post("/api/shopping")
+def shopping_add(item: ShoppingIn):
+    start = _shop_week(item.week_start)
+    conn = db()
+    cur = conn.execute(
+        "INSERT INTO shopping_items(week_start,name,qty,unit,hint,note,source) VALUES(?,?,?,?,?,?, 'manual')",
+        (start.isoformat(), item.name.strip(), item.qty, item.unit, item.hint, item.note))
+    conn.commit()
+    conn.close()
+    return {"added": cur.lastrowid}
+
+
+@app.patch("/api/shopping/{item_id}")
+def shopping_patch(item_id: int, patch: ShoppingPatch):
+    conn = db()
+    if not conn.execute("UPDATE shopping_items SET checked=? WHERE id=?", (1 if patch.checked else 0, item_id)).rowcount:
+        conn.close()
+        raise HTTPException(404, "not found")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@app.delete("/api/shopping/{item_id}")
+def shopping_delete(item_id: int):
+    conn = db()
+    conn.execute("DELETE FROM shopping_items WHERE id=?", (item_id,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@app.post("/api/shopping/purchase")
+def shopping_purchase(week_start: str | None = None):
+    """Checked-off rows become inventory (the loop closes after the store trip)."""
+    start = _shop_week(week_start)
+    conn = db()
+    rows = conn.execute("SELECT * FROM shopping_items WHERE week_start=? AND checked=1",
+                        (start.isoformat(),)).fetchall()
+    conn.close()
+    added = []
+    for r in rows:
+        location = r["hint"] if r["hint"] in ("pantry", "freezer", "fridge") else \
+            {"Frozen": "freezer", "Dairy & Eggs": "fridge", "Produce": "fridge",
+             "Meat & Seafood": "fridge"}.get(aisle_of(r["name"], r["hint"]), "pantry")
+        conn2 = db()
+        # Exact-name merge only: fuzzy similar() could absorb "sour cream" into
+        # "sour cream & onion kettle chips" — purchases are explicit, keep them distinct.
+        nn = norm(r["name"])
+        exact = next((row for row in conn2.execute("SELECT id, name, qty FROM inventory")
+                      if norm(row["name"]) == nn), None)
+        if exact:
+            conn2.execute("UPDATE inventory SET qty = qty + ?, location = ?, updated_at = datetime('now') WHERE id = ?",
+                          (r["qty"], location, exact["id"]))
+            res = {"merged": exact["id"], "name": exact["name"]}
+        else:
+            cur = conn2.execute(
+                "INSERT INTO inventory(name,location,qty,unit,source) VALUES(?,?,?,?,?)",
+                (r["name"], location, r["qty"], r["unit"], "shopping list"))
+            res = {"added": cur.lastrowid, "name": r["name"]}
+        conn2.execute("DELETE FROM shopping_items WHERE id=?", (r["id"],))
+        conn2.commit()
+        conn2.close()
+        added.append({**res, "qty": r["qty"], "unit": r["unit"], "location": location})
+    return {"week_start": start.isoformat(), "added": added}
 
 
 @app.get("/api/summary")
