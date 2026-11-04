@@ -182,16 +182,21 @@ NUT_ALTERNATE = re.compile(
     r'\b(cashews?|almonds?|walnuts?|pistachios?|pecans?|macadamia(?:s)?(?:\s+nut)?|'
     r'hazelnuts?|brazil\s+nuts?|sunflower\s+seeds?|pumpkin\s+seeds?|pine\s+nuts?)\b', re.I)
 PEANUT_WORD = re.compile(r'\b(peanuts?|groundnuts?|arachis)\b', re.I)
-PEANUT_OIL = re.compile(r'\b(?:peanut(?:s)?|groundnut)s?\s+oils?\b', re.I)
+OIL_WORD = re.compile(r'\boils?\b', re.I)
+# Singular "peanut"/"groundnut" used adjectivally on an oil line.
+# Blocked when it clearly modifies a real peanut product (butter/sauce/paste/...).
+PEANUT_AS_OIL = re.compile(
+    r'\b(?:peanut|groundnut)\b(?![\s-]*(?:butter|sauce|paste|meal|flour|salt|skins?|shells?))', re.I)
 
 
 def ingredient(raw):
     raw = text(raw)
     note = ""
     if PEANUT_WORD.search(raw):
-        without_oil = PEANUT_OIL.sub("", raw)
+        # "peanut or safflower oil", "peanut, canola or grape seed oil",
+        # "neutral oil, like peanut or grapeseed": peanut names an oil option.
+        without_oil = PEANUT_AS_OIL.sub("", raw) if OIL_WORD.search(raw) else raw
         if not PEANUT_WORD.search(without_oil):
-            # Peanut oil only: highly refined oil is not a trigger for this household.
             note = "peanut oil (refined — tolerated in this household)"
         elif NUT_ALTERNATE.search(without_oil) and re.search(r'\bor\b', without_oil, re.I):
             # Alternation like "peanuts or cashews": pick the non-peanut option.

@@ -69,7 +69,18 @@ class ParserTests(unittest.TestCase):
         self.assertTrue(all(i['allergy_note'].startswith('peanut oil') for i in allowed['ingredients']))
         alt = ri.normalize(sample(recipeIngredient=['⅓ cup peanuts or cashews']))
         self.assertIn('non-peanut', alt['ingredients'][0]['allergy_note'])
-        for line in ('roasted peanuts','1 cup peanut butter','½ cup peanuts, crushed'):
+        # Real NYT phrasings that previously false-rejected (2026-11-04 user report):
+        for line in ('1 tablespoon peanut or safflower oil',
+                     '2 tablespoons peanut, canola, rice bran, sunflower, or grape seed oil',
+                     'Safflower, peanut or vegetable oil, for frying',
+                     '2 tablespoons neutral oil, like peanut or grapeseed',
+                     '½ cup peanut or other neutral oil'):
+            with self.subTest(line=line):
+                got = ri.normalize(sample(recipeIngredient=[line]))
+                self.assertEqual(got['ingredients'][0]['allergy_note'],
+                                 'peanut oil (refined — tolerated in this household)')
+        for line in ('roasted peanuts','1 cup peanut butter','½ cup peanuts, crushed',
+                     '½ cup peanut sauce, plus 1 tbsp oil'):
             with self.subTest(line=line):
                 with self.assertRaisesRegex(ValueError,'Peanut ingredient rejected'):
                     ri.normalize(sample(recipeIngredient=[line]))
