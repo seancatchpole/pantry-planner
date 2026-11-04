@@ -55,6 +55,8 @@
            display: none; align-items: flex-start; justify-content: center; padding: 24px 16px; }
   .modal-body { max-width: 800px; width: 100%; max-height: 86vh; overflow: auto;
            background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+  .card.clickable { cursor: pointer; }
+  .card.clickable:hover { border-color: var(--accent); }
   .muted { color: var(--muted); } .prefscore { font-size: 12px; }
   .empty { color: var(--muted); padding: 24px; text-align: center; }
 </style>
@@ -316,6 +318,6 @@ async function loadSummary() {
 }
 loadPlan(); loadSummary();
 </script>
-<script src="/static/recipes.js?v=modal1"></script>
+<script src="/static/recipes.js?v=modal2"></script>
 </body>
 </html>

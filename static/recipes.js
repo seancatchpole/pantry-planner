@@ -30,8 +30,9 @@ async function loadRecipes() {
     const data = await api('/api/recipes/browse?' + params);
     const grid = $('#recipecards'); grid.replaceChildren();
     for (const r of data.items) {
-      const card = node('article', null, grid, 'card'); sourceHeader(r, card);
-      const button = node('button', 'Full recipe', card, 'btn'); button.onclick = () => recipeDetail(r.id);
+      const card = node('article', null, grid, 'card clickable'); sourceHeader(r, card);
+      card.onclick = e => { if (!e.target.closest('a')) recipeDetail(r.id); };
+      const button = node('button', 'Full recipe', card, 'btn'); button.onclick = e => { e.stopPropagation(); recipeDetail(r.id); };
     }
     $('#recipe-page').textContent = `${data.total ? data.offset + 1 : 0}–${Math.min(data.total,data.offset+data.items.length)} of ${data.total}`;
     $('#recipe-next').disabled = data.offset + data.items.length >= data.total;
