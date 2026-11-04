@@ -57,6 +57,14 @@
            background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
   .card.clickable { cursor: pointer; }
   .card.clickable:hover { border-color: var(--accent); }
+  .combo { position: relative; display: inline-block; }
+  .combo-list { position: absolute; top: calc(100% + 4px); left: 0; min-width: 100%; width: max(100%, 240px);
+           background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+           max-height: 280px; overflow: auto; display: none; z-index: 30; }
+  .combo-list button { display: flex; justify-content: space-between; gap: 14px; width: 100%; text-align: left;
+           background: none; border: 0; border-radius: 0; padding: 7px 12px; cursor: pointer; color: var(--text); font-size: 13px; }
+  .combo-list button:hover { background: var(--panel); }
+  .combo-list .count { color: var(--muted); flex: none; }
   .muted { color: var(--muted); } .prefscore { font-size: 12px; }
   .empty { color: var(--muted); padding: 24px; text-align: center; }
 </style>
@@ -125,10 +133,10 @@
       <pre id="import-status" style="white-space:pre-wrap" role="status"></pre>
     </div>
     <div class="formrow" style="margin-top:16px">
-      <input id="recipe-search" placeholder="Search names" aria-label="Search recipes">
-      <input id="recipe-source" placeholder="Source" aria-label="Source filter">
-      <input id="recipe-tag" placeholder="Tag" aria-label="Tag filter">
-      <input id="recipe-category" placeholder="Category" aria-label="Category filter">
+      <span class="combo"><input id="recipe-search" placeholder="Search names" aria-label="Search recipes" autocomplete="off"><div class="combo-list" id="recipe-search-list"></div></span>
+      <span class="combo"><input id="recipe-source" placeholder="Source" aria-label="Source filter" autocomplete="off"><div class="combo-list" id="recipe-source-list"></div></span>
+      <span class="combo"><input id="recipe-tag" placeholder="Tag" aria-label="Tag filter" autocomplete="off"><div class="combo-list" id="recipe-tag-list"></div></span>
+      <span class="combo"><input id="recipe-category" placeholder="Category" aria-label="Category filter" autocomplete="off"><div class="combo-list" id="recipe-category-list"></div></span>
       <select id="recipe-sort"><option value="name">Name</option><option value="rating">Source rating</option></select>
       <button class="btn" onclick="recipeOffset=0;loadRecipes()">Filter</button>
     </div>
@@ -318,6 +326,6 @@ async function loadSummary() {
 }
 loadPlan(); loadSummary();
 </script>
-<script src="/static/recipes.js?v=modal2"></script>
+<script src="/static/recipes.js?v=modal3"></script>
 </body>
 </html>

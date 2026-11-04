@@ -38,6 +38,42 @@ async function loadRecipes() {
     $('#recipe-next').disabled = data.offset + data.items.length >= data.total;
   } catch(e) { toast(e.message); }
 }
+const comboFields = [['recipe-search', 'name'], ['recipe-source', 'source'], ['recipe-tag', 'tag'], ['recipe-category', 'category']];
+let comboTimer = null;
+async function comboSuggest(field, q) {
+  return (await api('/api/recipes/facets?field=' + field + '&q=' + encodeURIComponent(q) + '&limit=15')).items;
+}
+async function showCombo(id, field) {
+  const input = $('#' + id), list = $('#' + id + '-list'), q = input.value;
+  if (input.dataset.comboBlur === '1') return;
+  try {
+    const items = await comboSuggest(field, q);
+    if (input.value !== q || input.dataset.comboBlur === '1') return;  // user typed more, or left the field
+    list.replaceChildren();
+    if (!items.length) { list.style.display = 'none'; return; }
+    for (const it of items) {
+      const b = node('button', null, list); b.type = 'button';
+      node('span', it.value, b); node('span', String(it.count), b, 'count');
+      b.onmousedown = e => e.preventDefault();  // keep input focused while the click registers
+      b.onclick = () => { input.value = it.value; list.style.display = 'none'; recipeOffset = 0; loadRecipes(); };
+    }
+    list.style.display = 'block';
+  } catch(e) { list.style.display = 'none'; }
+}
+function initCombos() {
+  for (const [id, field] of comboFields) {
+    const input = $('#' + id);
+    if (!input || !input.addEventListener) continue;
+    input.addEventListener('focus', () => { input.dataset.comboBlur = '0'; showCombo(id, field); });
+    input.addEventListener('input', () => { clearTimeout(comboTimer); comboTimer = setTimeout(() => showCombo(id, field), 150); });
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { clearTimeout(comboTimer); $('#' + id + '-list').style.display = 'none'; }
+      else if (e.key === 'Enter') { clearTimeout(comboTimer); $('#' + id + '-list').style.display = 'none'; recipeOffset = 0; loadRecipes(); }
+    });
+    input.addEventListener('blur', () => { input.dataset.comboBlur = '1'; setTimeout(() => { const l = $('#' + id + '-list'); if (l) l.style.display = 'none'; }, 200); });
+  }
+}
+if (document.querySelectorAll) initCombos();
 function renderSteps(steps, parent) {
   const ol = node('ol', null, parent);
   for (const step of steps || []) {

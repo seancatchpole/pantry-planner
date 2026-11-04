@@ -141,6 +141,17 @@ class APITests(unittest.TestCase):
         self.assertEqual(result['total'],1); self.assertEqual(len(result['items']),1)
         self.assertNotIn('raw_jsonld',result['items'][0]['metadata'])
         self.assertEqual(self.client.get('/api/recipes/browse?limit=999').json()['limit'],60)
+    def test_facets_autocomplete(self):
+        self.client.post('/api/recipes/import',json={'content':sample(),'preview':False})
+        self.assertEqual(self.client.get('/api/recipes/facets?field=bogus').status_code,422)
+        srcs=self.client.get('/api/recipes/facets?field=source&q=nyt').json()['items']
+        self.assertEqual(srcs[0]['value'],'NYT Cooking'); self.assertEqual(srcs[0]['count'],1)
+        self.assertEqual(self.client.get('/api/recipes/facets?field=source&q=zzz').json()['items'],[])
+        tags=self.client.get('/api/recipes/facets?field=tag&q=ea').json()['items']
+        self.assertIn('easy',[t['value'] for t in tags])
+        cats=self.client.get('/api/recipes/facets?field=category&q=din').json()['items']
+        self.assertTrue(any('Dinner' in c['value'] for c in cats))
+        self.assertTrue(self.client.get('/api/recipes/facets?field=name&q=sou').json()['items'])
 
 
 class NetworkTests(unittest.TestCase):

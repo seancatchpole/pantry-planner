@@ -273,6 +273,39 @@ def browse_recipes(q: str = '', source: str = '', tag: str = '', category: str =
         conn.close()
 
 
+@app.get('/api/recipes/facets')
+def recipe_facets(field: str = 'tag', q: str = '', limit: int = 15):
+    """Autocomplete values for the browse filters, most-used first."""
+    limit = max(1, min(50, limit))
+    if field not in ('source', 'tag', 'category', 'name'):
+        raise HTTPException(422, "field must be one of: source, tag, category, name")
+    like, needle = '%' + q + '%', q.lower()
+    conn = db()
+    try:
+        if field == 'tag':
+            counts: dict[str, int] = {}
+            for (raw,) in conn.execute('SELECT tags FROM recipes WHERE tags LIKE ?', (like,)):
+                for tag in (raw or '').split(','):
+                    tag = tag.strip()
+                    if tag and needle in tag.lower():
+                        counts[tag] = counts.get(tag, 0) + 1
+            items = [{'value': v, 'count': c} for v, c in sorted(counts.items(), key=lambda x: (-x[1], x[0]))[:limit]]
+        else:
+            expr = {'source': "json_extract(metadata, '$.source_name')",
+                    'category': "json_extract(metadata, '$.classifications.recipeCategory')",
+                    'name': 'name'}[field]
+            if field == 'category':
+                sql = ("SELECT je.value AS v, COUNT(*) AS c FROM recipes, "
+                       "json_each(" + expr + ") je WHERE je.value LIKE ? "
+                       "GROUP BY je.value ORDER BY c DESC, je.value LIMIT ?")
+            else:
+                sql = 'SELECT ' + expr + ' AS v, COUNT(*) AS c FROM recipes WHERE ' + expr + " IS NOT NULL AND " + expr + " LIKE ? GROUP BY v ORDER BY c DESC, v LIMIT ?"
+            items = [{'value': r['v'], 'count': r['c']} for r in conn.execute(sql, (like, limit))]
+        return {'items': items}
+    finally:
+        conn.close()
+
+
 @app.get('/api/recipes/{recipe_id}')
 def get_recipe(recipe_id: int):
     conn = db()
