@@ -62,10 +62,19 @@ class ParserTests(unittest.TestCase):
                 parsed=ri.ingredient(text)
                 self.assertEqual((parsed['qty'],parsed['unit'],parsed['name']),(qty,unit,name))
                 self.assertEqual(parsed['raw'],text)
-    def test_peanuts_rejected_not_stripped(self):
-        for line in ('1 tbsp peanut oil','roasted peanuts','oil, or peanut oil','groundnut oil'):
-            with self.assertRaisesRegex(ValueError,'Peanut ingredient rejected'):
-                ri.normalize(sample(recipeIngredient=[line]))
+    def test_peanut_policy_matches_household(self):
+        # Household rule (user-stated 2026-11-04): refined peanut oil is tolerated;
+        # alternates like "peanuts or cashews" are fine (pick the other nut).
+        allowed = ri.normalize(sample(recipeIngredient=['1 tbsp peanut oil','oil, or peanut oil','groundnut oil']))
+        self.assertTrue(all(i['allergy_note'].startswith('peanut oil') for i in allowed['ingredients']))
+        alt = ri.normalize(sample(recipeIngredient=['⅓ cup peanuts or cashews']))
+        self.assertIn('non-peanut', alt['ingredients'][0]['allergy_note'])
+        for line in ('roasted peanuts','1 cup peanut butter','½ cup peanuts, crushed'):
+            with self.subTest(line=line):
+                with self.assertRaisesRegex(ValueError,'Peanut ingredient rejected'):
+                    ri.normalize(sample(recipeIngredient=[line]))
+        with self.assertRaisesRegex(ValueError,'Peanut ingredient rejected'):
+            ri.normalize(sample(recipeIngredient=['2 tbsp peanut oil','chopped peanuts']))
         ri.normalize(sample(recipeIngredient=['1 cup peas']))
     def test_sections(self):
         r=ri.normalize(sample(recipeIngredient=['For the soup:','2 cups stock',{'name':'Garnish','itemListElement':['1 cup herbs']}]))
@@ -112,7 +121,7 @@ class APITests(unittest.TestCase):
         self.assertEqual(recipe['preference']['ups'],1)
         self.assertEqual(self.client.get('/api/plan?week_start=2026-11-02').json()['meals'][0]['recipe']['id'],rid)
     def test_errors_and_pagination(self):
-        for payload in ({'content':'blocked'}, {'content':sample(recipeIngredient=['peanut oil'])}):
+        for payload in ({'content':'blocked'}, {'content':sample(recipeIngredient=['½ cup peanut butter'])}):
             self.assertEqual(self.client.post('/api/recipes/import',json=payload).status_code,400)
         with patch('recipe_import.fetch_url',side_effect=OSError('network blocked')):
             self.assertEqual(self.client.post('/api/recipes/import',json={'url':'https://example.com'}).status_code,400)

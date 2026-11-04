@@ -178,10 +178,26 @@ def number(value):
         return None
 
 
+NUT_ALTERNATE = re.compile(
+    r'\b(cashews?|almonds?|walnuts?|pistachios?|pecans?|macadamia(?:s)?(?:\s+nut)?|'
+    r'hazelnuts?|brazil\s+nuts?|sunflower\s+seeds?|pumpkin\s+seeds?|pine\s+nuts?)\b', re.I)
+PEANUT_WORD = re.compile(r'\b(peanuts?|groundnuts?|arachis)\b', re.I)
+PEANUT_OIL = re.compile(r'\b(?:peanut(?:s)?|groundnut)s?\s+oils?\b', re.I)
+
+
 def ingredient(raw):
     raw = text(raw)
-    if re.search(r'\b(peanuts?|groundnuts?|arachis)\b', raw, re.I):
-        raise ValueError('Peanut ingredient rejected: ' + raw)
+    note = ""
+    if PEANUT_WORD.search(raw):
+        without_oil = PEANUT_OIL.sub("", raw)
+        if not PEANUT_WORD.search(without_oil):
+            # Peanut oil only: highly refined oil is not a trigger for this household.
+            note = "peanut oil (refined — tolerated in this household)"
+        elif NUT_ALTERNATE.search(without_oil) and re.search(r'\bor\b', without_oil, re.I):
+            # Alternation like "peanuts or cashews": pick the non-peanut option.
+            note = "peanut listed as one option — choose the non-peanut alternate"
+        else:
+            raise ValueError('Peanut ingredient rejected: ' + raw)
     s = ''.join(' ' + str(Fraction(unicodedata.numeric(c)).limit_denominator(100)).strip() if c in '¼½¾⅐⅑⅒⅓⅔⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞' else c for c in raw)
     s = s.replace('⁄', '/')
     m = re.match(r'^\s*(\d+\s+\d+/\d+|\d+/\d+|\d+(?:\.\d+)?)(?=\s|\(|$)', s)
@@ -201,7 +217,10 @@ def ingredient(raw):
     unitmatch = re.match(r'^(cups?|tablespoons?|tbsp|teaspoons?|tsp|pounds?|lbs?|ounces?|oz|grams?|g|kg|ml|liters?|cans?|cloves?|packages?|bunches?)\b\.?\s*', rest, re.I)
     unit = unitmatch[1].lower() if unitmatch else ''
     name = rest[unitmatch.end():] if unitmatch else rest
-    return {'raw': raw, 'qty': qty, 'unit': unit, 'name': name.strip() or raw}
+    out = {'raw': raw, 'qty': qty, 'unit': unit, 'name': name.strip() or raw}
+    if note:
+        out['allergy_note'] = note
+    return out
 
 
 def instructions(value):

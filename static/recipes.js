@@ -53,8 +53,8 @@ async function recipeDetail(id) {
     sourceHeader(r, panel);
     node('h4', 'Ingredients', panel);
     if ((m.ingredient_sections || []).length) {
-      for (const section of m.ingredient_sections) { node('h5', section.name, panel); const ul=node('ul',null,panel); for(const ing of section.ingredients) node('li',ing.raw,ul); }
-    } else { const ul = node('ul', null, panel); for (const i of r.ingredients) node('li', i.raw || `${i.qty || 'some'} ${i.unit} ${i.name}`, ul); }
+      for (const section of m.ingredient_sections) { node('h5', section.name, panel); const ul=node('ul',null,panel); for(const ing of section.ingredients) { const li=node('li',ing.raw,ul); if(ing.allergy_note) node('span',' ⚠ '+ing.allergy_note, li, 'muted'); } }
+    } else { const ul = node('ul', null, panel); for (const i of r.ingredients) { const li = node('li', i.raw || `${i.qty || 'some'} ${i.unit} ${i.name}`, ul); if (i.allergy_note) node('span', ' ⚠ ' + i.allergy_note, li, 'muted'); } }
     node('h4', 'Instructions', panel);
     if (m.instructions?.length) renderSteps(m.instructions, panel); else node('pre', r.steps, panel).style.whiteSpace='pre-wrap';
     for (const [title,value] of [['Yield',m.yield_text],['Times',m.times],['Nutrition (source supplied)',m.nutrition],['Nutrition provenance',m.nutrition_provenance],['Embedded source reviews',m.reviews],['Video metadata',m.video],['Tips',m.tips],['Dates',m.dates]]) {
