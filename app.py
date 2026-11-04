@@ -1,4 +1,5 @@
 """Freezer & Pantry inventory + weekly dinner planner API."""
+import http.client
 import json
 import os
 import random
@@ -17,6 +18,7 @@ BASE = Path(__file__).parent
 DB_PATH = Path(os.environ.get("PANTRY_DB", BASE / "data" / "pantry.db"))
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 MIN_WEEKNIGHT_PROTEIN = float(os.environ.get("MIN_WEEKNIGHT_PROTEIN", 30))
+MIN_WEEKEND_PROTEIN = float(os.environ.get("MIN_WEEKEND_PROTEIN", 20))
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -84,6 +86,8 @@ def init_db():
         );
         """
     )
+    from recipe_import import migrate
+    migrate(conn)
     if conn.execute("SELECT COUNT(*) FROM recipes").fetchone()[0] == 0:
         from seed_data import RECIPES
         for r in RECIPES:
@@ -217,6 +221,7 @@ def recipe_dict(r: sqlite3.Row) -> dict:
     d = dict(r)
     d["ingredients"] = json.loads(d.get("ingredients") or "[]")
     d["tags"] = [t for t in (d.get("tags") or "").split(",") if t]
+    d["metadata"] = json.loads(d.get("metadata") or "{}")
     return d
 
 
@@ -232,6 +237,56 @@ def list_recipes():
     return out
 
 
+@app.get('/api/recipes/options')
+def recipe_options():
+    conn = db()
+    try:
+        return [dict(r) for r in conn.execute('SELECT id,name,kind FROM recipes ORDER BY name')]
+    finally:
+        conn.close()
+
+
+@app.get('/api/recipes/browse')
+def browse_recipes(q: str = '', source: str = '', tag: str = '', category: str = '', sort: str = 'name', offset: int = 0, limit: int = 24):
+    limit, offset = max(1, min(60, limit)), max(0, offset)
+    clauses, params = [], []
+    for expression, value in [('name', q), ("json_extract(metadata, '$.source_name')", source), ('tags', tag), ("json_extract(metadata, '$.classifications.recipeCategory')", category)]:
+        if value:
+            clauses.append(expression + ' LIKE ?')
+            params.append('%' + value + '%')
+    where = ' WHERE ' + ' AND '.join(clauses) if clauses else ''
+    order = "(json_extract(metadata,'$.rating.value') - COALESCE(json_extract(metadata,'$.rating.worst'),1)) / NULLIF(COALESCE(json_extract(metadata,'$.rating.best'),5) - COALESCE(json_extract(metadata,'$.rating.worst'),1),0) DESC, name" if sort == 'rating' else 'name'
+    conn = db()
+    try:
+        total = conn.execute('SELECT COUNT(*) FROM recipes' + where, params).fetchone()[0]
+        rows = conn.execute('SELECT * FROM recipes' + where + ' ORDER BY ' + order + ' LIMIT ? OFFSET ?', params + [limit, offset]).fetchall()
+        items = []
+        prefs = preference_map()
+        for row in rows:
+            r = recipe_dict(row)
+            r['metadata'] = {k: v for k, v in r['metadata'].items() if k in ('source_name','authors','images','rating','description')}
+            r.pop('ingredients', None); r.pop('steps', None)
+            r['preference'] = prefs.get(r['id'], {})
+            items.append(r)
+        return {'items': items, 'total': total, 'offset': offset, 'limit': limit}
+    finally:
+        conn.close()
+
+
+@app.get('/api/recipes/{recipe_id}')
+def get_recipe(recipe_id: int):
+    conn = db()
+    try:
+        row = conn.execute('SELECT * FROM recipes WHERE id=?', (recipe_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, 'recipe not found')
+        result = recipe_dict(row)
+        result['preference'] = preference_map().get(recipe_id, {})
+        return result
+    finally:
+        conn.close()
+
+
 class RecipeIn(BaseModel):
     name: str
     kind: str = "weeknight"
@@ -241,35 +296,112 @@ class RecipeIn(BaseModel):
     ingredients: list[dict] = []
     steps: str = ""
     tags: list[str] = []
+    metadata: dict = {}
+    source_url: str = ""
+
+
+class ImportIn(BaseModel):
+    url: str = ""
+    content: str | dict | list | None = None
+    preview: bool = True
+
+
+@app.post("/api/recipes/import")
+def import_recipe(payload: ImportIn):
+    from recipe_import import fetch_url, extract_recipe, normalize, upsert
+    try:
+        content, url = (payload.content, payload.url) if payload.content is not None else fetch_url(payload.url)
+        recipe = normalize(extract_recipe(content), url)
+        if payload.preview:
+            return {"preview": True, "recipe": recipe}
+        conn = db()
+        try:
+            result = upsert(conn, recipe)
+            conn.commit()
+            return {**result, "recipe": recipe}
+        finally:
+            conn.close()
+    except (ValueError, OSError, http.client.HTTPException, RecursionError) as exc:
+        raise HTTPException(400, str(exc) or 'Invalid or blocked recipe source') from exc
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(409, 'Concurrent source import conflict; retry') from exc
 
 
 @app.post("/api/recipes")
 def add_recipe(r: RecipeIn):
+    from recipe_import import ingredient, canonical_url
+    try:
+        for ing in r.ingredients:
+            ingredient(ing.get('raw') or ing.get('name', ''))
+        source_url = canonical_url(r.source_url)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     conn = db()
-    cur = conn.execute(
-        "INSERT INTO recipes(name,kind,minutes,servings,protein_per_serving,ingredients,steps,tags) "
-        "VALUES(?,?,?,?,?,?,?,?)",
-        (r.name, r.kind, r.minutes, r.servings, r.protein_per_serving,
-         json.dumps(r.ingredients), r.steps, ",".join(r.tags)))
-    conn.commit()
-    conn.close()
-    return {"added": cur.lastrowid, "name": r.name}
+    try:
+        cur = conn.execute(
+            "INSERT INTO recipes(name,kind,minutes,servings,protein_per_serving,ingredients,steps,tags,source_url,metadata) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (r.name, r.kind, r.minutes, r.servings, r.protein_per_serving,
+             json.dumps(r.ingredients), r.steps, ",".join(r.tags), source_url, json.dumps(r.metadata)))
+        conn.commit()
+        return {"added": cur.lastrowid, "name": r.name}
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(409, 'Recipe name or source already exists') from exc
+    finally:
+        conn.close()
+
+
+class RecipePatch(BaseModel):
+    name: str | None = None
+    kind: str | None = None
+    minutes: int | None = None
+    servings: int | None = None
+    protein_per_serving: float | None = None
+    ingredients: list[dict] | None = None
+    steps: str | None = None
+    tags: list[str] | None = None
+    metadata: dict | None = None
+    source_url: str | None = None
+
+
+def merge_metadata(old, new):
+    result = dict(old)
+    for key, value in new.items():
+        result[key] = merge_metadata(result[key], value) if isinstance(value, dict) and isinstance(result.get(key), dict) else value
+    return result
 
 
 @app.patch("/api/recipes/{recipe_id}")
-def update_recipe(recipe_id: int, r: RecipeIn):
+def update_recipe(recipe_id: int, r: RecipePatch):
+    from recipe_import import ingredient, canonical_url
     conn = db()
-    if not conn.execute("SELECT 1 FROM recipes WHERE id=?", (recipe_id,)).fetchone():
+    try:
+        row = conn.execute("SELECT * FROM recipes WHERE id=?", (recipe_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "recipe not found")
+        updates = r.model_dump(exclude_unset=True)
+        if any(v is None for v in updates.values()):
+            raise HTTPException(422, 'Recipe fields may not be null')
+        for ing in updates.get('ingredients', []):
+            ingredient(ing.get('raw') or ing.get('name', ''))
+        if 'source_url' in updates:
+            updates['source_url'] = canonical_url(updates['source_url'])
+        if 'metadata' in updates:
+            updates['metadata'] = json.dumps(merge_metadata(json.loads(row['metadata'] or '{}'), updates['metadata']))
+        if 'ingredients' in updates:
+            updates['ingredients'] = json.dumps(updates['ingredients'])
+        if 'tags' in updates:
+            updates['tags'] = ','.join(updates['tags'])
+        if updates:
+            conn.execute('UPDATE recipes SET ' + ','.join(k+'=?' for k in updates) + ' WHERE id=?', list(updates.values()) + [recipe_id])
+            conn.commit()
+        return {"ok": True}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(409, 'Recipe name/source collision or invalid kind') from exc
+    finally:
         conn.close()
-        raise HTTPException(404, "recipe not found")
-    conn.execute(
-        "UPDATE recipes SET name=?,kind=?,minutes=?,servings=?,protein_per_serving=?,"
-        "ingredients=?,steps=?,tags=? WHERE id=?",
-        (r.name, r.kind, r.minutes, r.servings, r.protein_per_serving,
-         json.dumps(r.ingredients), r.steps, ",".join(r.tags), recipe_id))
-    conn.commit()
-    conn.close()
-    return {"ok": True}
 
 
 @app.delete("/api/recipes/{recipe_id}")
@@ -384,6 +516,44 @@ def delete_plan(plan_id: int):
     return {"ok": True}
 
 
+def source_rating_prior(rec) -> float:
+    """Weak prior from the source's published star rating. Only nudges recipes
+    the family has no thumbs history for; family feedback (x3) dominates."""
+    meta = rec.get("metadata") or {}
+    r = meta.get("rating") or {}
+    val, best, worst = r.get("value"), r.get("best"), r.get("worst")
+    if val is None:
+        return 0.0
+    best = best if best is not None else 5
+    worst = worst if worst is not None else 1
+    if best <= worst:
+        return 0.0
+    norm = (val - worst) / (best - worst)
+    norm = max(0.0, min(1.0, norm))
+    confidence = min(1.0, (r.get("count") or r.get("review_count") or 0) / 50)
+    return (norm - 0.6) * 1.2 * confidence
+
+
+class InventoryIndex:
+    """Precomputed normalized inventory for fast coverage matching (same semantics as similar())."""
+    def __init__(self, names):
+        self.entries = []
+        for n in names:
+            nn = norm(n)
+            if nn:
+                self.entries.append((nn, frozenset(nn.split())))
+
+    def hit(self, name):
+        nn = norm(name)
+        if not nn:
+            return False
+        at = frozenset(nn.split())
+        for n, bt in self.entries:
+            if nn == n or nn in n or n in nn or at <= bt or bt <= at:
+                return True
+        return False
+
+
 @app.post("/api/plan/generate")
 def generate_week(week_start: str | None = None):
     """Fill missing dinners for the week: Mon-Thu easy 30g+ protein, Fri-Sun involved.
@@ -399,8 +569,21 @@ def generate_week(week_start: str | None = None):
         "SELECT recipe_id FROM consumption WHERE date >= ? UNION "
         "SELECT recipe_id FROM plan WHERE date >= ? AND date < ?", (cutoff, cutoff, start.isoformat()))}
     inv = db().execute("SELECT name FROM inventory WHERE qty > 0").fetchall()
-    inv_names = [r["name"] for r in inv]
-    recipes = [recipe_dict(r) for r in conn.execute("SELECT * FROM recipes").fetchall()]
+    inv_index = InventoryIndex([r["name"] for r in inv])
+    # Slim projection: never parse the full raw-JSON-LD metadata blob here.
+    recipes = []
+    for row in conn.execute(
+            "SELECT id,name,kind,minutes,servings,protein_per_serving,ingredients,tags,"
+            " json_extract(metadata,'$.rating') AS rating_json FROM recipes"):
+        rec = dict(row)
+        rec["ingredients"] = json.loads(rec["ingredients"] or "[]")
+        rec["tags"] = [t for t in (rec["tags"] or "").split(",") if t]
+        rec["metadata"] = {"rating": json.loads(rec.pop("rating_json") or "{}")}
+        # Inventory is fixed for the run: coverage & protein buckets computed once per recipe.
+        ings = [i for i in rec["ingredients"] if i.get("name") and not is_ing_header(i["name"])]
+        rec["cov"] = sum(1 for i in ings if inv_index.hit(i["name"])) / max(1, len(ings))
+        rec["buckets"] = protein_buckets(rec)
+        recipes.append(rec)
     added = []
     used_this_week = set()
     buckets_used = set()
@@ -411,28 +594,32 @@ def generate_week(week_start: str | None = None):
         kind = "weeknight" if day.weekday() <= 3 else "weekend"  # Mon-Thu easy, Fri-Sun involved
         candidates = []
         for rec in recipes:
-            if any(t in ("breakfast", "side", "dessert", "baking") for t in rec["tags"]):
+            if any(t.lower() in ("breakfast", "side", "side dish", "dessert", "desserts", "baking",
+                                 "drinks", "non-alcoholic drinks", "alcoholic drinks", "cocktails",
+                                 "appetizer", "appetizers", "salad", "salads", "snack", "snacks",
+                                 "jams", "jellies and preserves", "preserves", "syrup", "syrups",
+                                 "condiments", "sauces", "smoothies", "bread", "breads") for t in rec["tags"]):
                 continue
             if kind == "weeknight" and rec["kind"] != "weeknight":
                 continue
             if kind == "weeknight" and rec["protein_per_serving"] < MIN_WEEKNIGHT_PROTEIN:
                 continue
+            if kind == "weekend" and rec["protein_per_serving"] < MIN_WEEKEND_PROTEIN:
+                continue  # keeps flan/pastry-class dishes out of the unbounded weekend pool
             if rec["id"] in used_this_week:
                 continue
             pref = prefs.get(rec["id"], {})
             score = pref.get("score", 0) * 3.0
             if kind == "weekend" and rec["kind"] == "weekend":
                 score += 2.0  # prefer involved builds on Fri-Sun
-            # pantry coverage: fraction of ingredients already in stock
-            hits = sum(1 for ing in rec["ingredients"] if any(similar(ing["name"], n) for n in inv_names))
-            cov = hits / max(1, len(rec["ingredients"]))
-            score += cov * 2.0
+            score += rec["cov"] * 2.0
+            score += source_rating_prior(rec)  # published stars as a weak prior
             if rec["id"] in recent_ids:
                 score -= 4.0
-            if protein_buckets(rec) & buckets_used:
+            if rec["buckets"] & buckets_used:
                 score -= 3.0  # protein variety within the week
             score += random.uniform(0, 0.3)
-            candidates.append((score, cov, rec))
+            candidates.append((score, rec["cov"], rec))
         if not candidates:
             continue
         candidates.sort(key=lambda x: -x[0])

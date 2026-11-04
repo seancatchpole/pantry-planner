@@ -109,7 +109,26 @@
 
   <!-- RECIPES -->
   <section id="page-recipes" style="display:none">
+    <div class="card">
+      <h3>Import a recipe directly</h3>
+      <p class="muted">Public HTTP(S) only; no paywall bypass. If blocked, paste JSON-LD or HTML you are permitted to use.</p>
+      <input id="import-url" type="url" placeholder="https://cooking.nytimes.com/recipes/…" style="width:100%">
+      <textarea id="import-content" placeholder="Optional: paste Recipe JSON-LD or HTML"></textarea>
+      <button class="btn" onclick="previewImport()">Preview</button>
+      <button class="btn primary" id="import-save" disabled onclick="saveImport()">Save preview</button>
+      <pre id="import-status" style="white-space:pre-wrap" role="status"></pre>
+    </div>
+    <div class="formrow" style="margin-top:16px">
+      <input id="recipe-search" placeholder="Search names" aria-label="Search recipes">
+      <input id="recipe-source" placeholder="Source" aria-label="Source filter">
+      <input id="recipe-tag" placeholder="Tag" aria-label="Tag filter">
+      <input id="recipe-category" placeholder="Category" aria-label="Category filter">
+      <select id="recipe-sort"><option value="name">Name</option><option value="rating">Source rating</option></select>
+      <button class="btn" onclick="recipeOffset=0;loadRecipes()">Filter</button>
+    </div>
     <div class="grid" id="recipecards"></div>
+    <div class="actions"><button class="btn" onclick="recipeOffset=Math.max(0,recipeOffset-24);loadRecipes()">Previous</button><span id="recipe-page"></span><button class="btn" id="recipe-next" onclick="recipeOffset+=24;loadRecipes()">Next</button></div>
+    <div id="recipe-detail" class="card" style="display:none;margin-top:16px"></div>
   </section>
 </main>
 <div id="toast"></div>
@@ -119,8 +138,9 @@ const $ = s => document.querySelector(s);
 let weekStart = localStorage.getItem('weekStart') || null;
 let feedbackState = {};   // plan_id -> +1/-1 (this view)
 
+function esc(value) { return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function toast(msg, ms=3500) {
-  const t = $('#toast'); t.innerHTML = msg; t.style.display = 'block';
+  const t = $('#toast'); t.textContent = msg; t.style.display = 'block';
   clearTimeout(t._h); t._h = setTimeout(() => t.style.display='none', ms);
 }
 async function api(path, opts) {
@@ -171,7 +191,7 @@ async function loadPlan() {
     } else {
       const r = m.recipe;
       const on = feedbackState[m.plan_id];
-      inner += `<h3>${r.name}</h3>
+      inner += `<h3>${esc(r.name)}</h3>
         <div class="badges">
           <span class="badge ${r.kind==='weekend' ? 'kind-weekend':''}">${r.kind}</span>
           <span class="badge protein">~${Math.round(r.protein_per_serving)}g protein</span>
@@ -180,8 +200,8 @@ async function loadPlan() {
           ${r.preference && r.preference.n ? `<span class="badge prefscore">👍${r.preference.ups} 👎${r.preference.downs}</span>` : ''}
         </div>
         <details><summary>ingredients &amp; steps</summary>
-          <ul class="steps">${r.ingredients.map(x=>`<li>${x.qty} ${x.unit} ${x.name}</li>`).join('')}</ul>
-          <div class="steps">${r.steps}</div></details>
+          <ul class="steps">${r.ingredients.map(x=>`<li>${esc(x.qty)} ${esc(x.unit)} ${esc(x.name)}</li>`).join('')}</ul>
+          <div class="steps">${esc(r.steps)}</div></details>
         <div class="actions">
           <button class="thumb up ${on===1?'on':''}" onclick="vote(${m.plan_id},1)">👍</button>
           <button class="thumb down ${on===-1?'on':''}" onclick="vote(${m.plan_id},-1)">👎</button>
@@ -222,9 +242,9 @@ async function genPlan() {
   loadPlan();
 }
 async function populateRecipePicker() {
-  const recs = await api('/api/recipes');
+  const recs = await api('/api/recipes/options');
   $('#pick-recipe').innerHTML = recs.map(r =>
-    `<option value="${r.id}">[${r.kind}] ${r.name}</option>`).join('');
+    `<option value="${r.id}">[${r.kind}] ${esc(r.name)}</option>`).join('');
 }
 async function manualPlan() {
   const date = $('#pick-date').value, rid = $('#pick-recipe').value;
@@ -280,27 +300,7 @@ async function submitReceipt() {
   $('#receipt-text').value = ''; loadInventory(); loadSummary();
 }
 
-// ---------- recipes ----------
-async function loadRecipes() {
-  const recs = await api('/api/recipes');
-  const grid = $('#recipecards'); grid.innerHTML = '';
-  for (const r of recs) {
-    const p = r.preference || {};
-    const card = document.createElement('div'); card.className = 'card';
-    card.innerHTML = `<h3>${r.name}</h3>
-      <div class="badges">
-        <span class="badge ${r.kind==='weekend'?'kind-weekend':''}">${r.kind}</span>
-        <span class="badge protein">~${Math.round(r.protein_per_serving)}g</span>
-        <span class="badge">⏱ ${r.minutes} min</span>
-        ${p.n ? `<span class="badge prefscore">family: 👍${p.ups} 👎${p.downs}</span>` : ''}
-        ${r.tags.map(t=>`<span class="badge">#${t}</span>`).join('')}
-      </div>
-      <details><summary>ingredients &amp; steps</summary>
-        <ul class="steps">${r.ingredients.map(x=>`<li>${x.qty} ${x.unit} ${x.name}</li>`).join('')}</ul>
-        <div class="steps">${r.steps}</div></details>`;
-    grid.appendChild(card);
-  }
-}
+// Rich recipe browser lives in /static/recipes.js.
 async function loadSummary() {
   try {
     const s = await api('/api/summary');
@@ -310,5 +310,6 @@ async function loadSummary() {
 }
 loadPlan(); loadSummary();
 </script>
+<script src="/static/recipes.js"></script>
 </body>
 </html>
