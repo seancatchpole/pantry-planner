@@ -45,6 +45,24 @@ function renderSteps(steps, parent) {
     else node('p', [step.name, step.text].filter(Boolean).join(': '), li);
   }
 }
+function isoMins(s) {
+  const t = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?$/.exec(String(s || ''));
+  if (!t || !(t[1] || t[2] || t[3])) return String(s || '');
+  const m = (+t[1] || 0) * 1440 + (+t[2] || 0) * 60 + (+t[3] || 0);
+  return m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? ' ' + (m % 60) + ' min' : ''}` : `${m} min`;
+}
+const NUTR_LABELS = [['calories','Calories'],['carbohydrateContent','Carbs'],['proteinContent','Protein'],['fatContent','Fat'],['saturatedFatContent','Saturated fat'],['unsaturatedFatContent','Unsaturated fat'],['transFatContent','Trans fat'],['cholesterolContent','Cholesterol'],['sodiumContent','Sodium'],['fiberContent','Fiber'],['sugarContent','Sugar']];
+const tidy = v => {
+  const s = String(v).replace(/\bgrams?\b/g, 'g').replace(/\bmilligrams?\b/g, 'mg').replace(/\bkilograms?\b/g, 'kg').replace(/\bmilliliters?\b/g, 'ml');
+  if (/^-?\d+(?:\.\d{2,})$/.test(s)) return String(Math.round(parseFloat(s) * 10) / 10);
+  return s;
+};
+function metaDetails(title, parent, rows) {
+  rows = (rows || []).filter(r => r && r[1] != null && String(r[1]).trim() !== '');
+  if (!rows.length) return;
+  const d = node('details', null, parent); node('summary', title, d);
+  for (const [label, value] of rows) node('p', label ? `${label}: ${value}` : String(value), d);
+}
 async function recipeDetail(id) {
   try {
     const r = await api('/api/recipes/' + id), m = r.metadata || {}, panel = $('#recipe-detail');
@@ -57,10 +75,20 @@ async function recipeDetail(id) {
     } else { const ul = node('ul', null, panel); for (const i of r.ingredients) { const li = node('li', i.raw || `${i.qty || 'some'} ${i.unit} ${i.name}`, ul); if (i.allergy_note) node('span', ' ⚠ ' + i.allergy_note, li, 'muted'); } }
     node('h4', 'Instructions', panel);
     if (m.instructions?.length) renderSteps(m.instructions, panel); else node('pre', r.steps, panel).style.whiteSpace='pre-wrap';
-    for (const [title,value] of [['Yield',m.yield_text],['Times',m.times],['Nutrition (source supplied)',m.nutrition],['Nutrition provenance',m.nutrition_provenance],['Embedded source reviews',m.reviews],['Video metadata',m.video],['Tips',m.tips],['Dates',m.dates]]) {
-      if (value == null) continue;
-      const detail = node('details', null, panel); node('summary', title, detail); node('pre', typeof value==='string' ? value : JSON.stringify(value,null,2), detail).style.cssText='white-space:pre-wrap;overflow-wrap:anywhere';
-    }
+    if (m.yield_text) node('p', `Yield: ${m.yield_text}`, panel, 'muted');
+    metaDetails('Times', panel, m.times && [['Prep', isoMins(m.times.prepTime)], ['Cook', isoMins(m.times.cookTime)], ['Total', isoMins(m.times.totalTime)]]);
+    const n = m.nutrition || {};
+    const known = new Set(NUTR_LABELS.map(([k]) => k));
+    metaDetails('Nutrition (source supplied)', panel, NUTR_LABELS.filter(([k]) => n[k] != null).map(([k, label]) => [label, tidy(n[k])])
+      .concat(Object.keys(n).filter(k => !known.has(k) && k !== '@type' && n[k] != null).map(k => [k, tidy(n[k])])));
+    const pr = m.nutrition_provenance || {};
+    metaDetails('Nutrition provenance', panel, [['Basis', pr.basis], ['Protein from', pr.protein_field]]);
+    metaDetails('Embedded source reviews', panel, (m.reviews || []).map(v => ['', [(v && v.author && (v.author.name || v.author)) || 'reader',
+      v && v.datePublished ? ` (${String(v.datePublished).slice(0, 10)})` : '',
+      v && v.reviewBody ? ': ' + v.reviewBody : ''].join('')]));
+    metaDetails('Videos', panel, (m.video || []).map(v => ['', [v && v.name, v && v.uploadDate ? `(${String(v.uploadDate).slice(0, 10)})` : ''].filter(Boolean).join(' ')]));
+    metaDetails('Tips', panel, (Array.isArray(m.tips) ? m.tips : [m.tips]).filter(Boolean).map(t => ['', typeof t === 'string' ? t : JSON.stringify(t)]));
+    metaDetails('Dates', panel, m.dates && [['Published', String(m.dates.datePublished || '').slice(0, 10)], ['Modified', String(m.dates.dateModified || '').slice(0, 10)]]);
     panel.scrollIntoView({behavior:'smooth'});
   } catch(e) { toast(e.message); }
 }
