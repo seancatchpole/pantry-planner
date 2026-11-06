@@ -216,13 +216,33 @@ def ingredient(raw):
     # Ambiguous ranges are retained intact, not silently over/under-counted.
     if re.match(r'^\d.*?(?:–|—|-|\bto\b)\s*\d', s):
         qty, rest = 0, raw
+        # strip the leading numeric range ("1 1/2 to 2 ", "12 to 16 ") so the
+        # name stays an inventory identity; qty conservatively stays 0
+        rest = re.sub(r'^\d+(?:\.\d+)?(?:\s+\d+/\d+|\s*(?:[–—-]|to|/)\s*\d+(?:\.\d+)?)*\s*(?:of\s+)?', '', rest)
     package = re.match(r'^\([^)]*\)\s*', rest)
     if package:
         rest = rest[package.end():]
-    unitmatch = re.match(r'^(cups?|tablespoons?|tbsp|teaspoons?|tsp|pounds?|lbs?|ounces?|oz|grams?|g|kg|ml|liters?|cans?|cloves?|packages?|bunches?)\b\.?\s*', rest, re.I)
+    unitmatch = re.match(r'^(cups?|tablespoons?|tbsp|teaspoons?|tsp|pounds?|lbs?|ounces?|oz|grams?|g|kg|ml|liters?|cans?|cloves?|packages?|bunches?|slices?|sticks?)\b\.?\s*(?:of\s+)?', rest, re.I)
     unit = unitmatch[1].lower() if unitmatch else ''
     name = rest[unitmatch.end():] if unitmatch else rest
-    out = {'raw': raw, 'qty': qty, 'unit': unit, 'name': name.strip() or raw}
+    name = name.strip()
+    # Cheap regex surgery: inventory identity is the head noun phrase; a trailing
+    # prep/purpose clause ("divided", "for the sauce", "thinly sliced") is kept as
+    # a note, never part of the name. Commas/semicolons split ONLY when the next
+    # clause starts with a prep/purpose cue word, so "boneless, skinless chicken"
+    # and "salt and pepper" stay intact; an opening paren always splits.
+    prep = ""
+    cues = (r'divided|plus|for\b|to taste|to serve|optional|drained|rinsed|pat(?:ted)?\b|'
+            r'chopped|sliced|diced|minced|trimmed|halved|quartered|peeled|cored|seeded|stemmed|'
+            r'zested|juiced|grated|shredded|cubed|cut\b|softened|melted|room temperature|at room|'
+            r'cold\b|warm\b|hot\b|low-sodium|reduced-sodium|no-salt|unsalted|sweetened|reserve|'
+            r'loosely|lightly|finely|coarsely|as needed|such as|like\b|preferably|only\b|or\b')
+    m = re.search(r'\(|[,;]\s*(?:' + cues + r')', name, re.I)
+    if m and m.start() > 0 and name[:m.start()].strip():
+        name, prep = name[:m.start()].strip(), name[m.start():].lstrip(',;( ').strip().rstrip(').;')
+    out = {'raw': raw, 'qty': qty, 'unit': unit, 'name': name or raw}
+    if prep:
+        out['prep'] = prep
     if note:
         out['allergy_note'] = note
     return out

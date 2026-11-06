@@ -123,8 +123,37 @@ def norm(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
+# Synonyms token-inclusion can't bridge (no shared tokens, e.g. scallions vs
+# green onions). Deliberately tiny and high-confidence: over-merging different
+# pantry items (heavy cream vs milk) is worse than a missed match.
+ALIAS_GROUPS = [
+    ("scallions", "green onions", "spring onions"),
+    ("cilantro", "fresh coriander"),
+    ("bell peppers", "sweet peppers"),
+    ("crushed red pepper", "red pepper flakes", "chili flakes", "chile flakes"),
+    ("eggplant", "aubergine"),
+    ("zucchini", "courgette", "courgettes"),
+    ("heavy cream", "heavy whipping cream", "whipping cream"),
+    ("kosher salt", "coarse salt", "sea salt"),
+    ("cannellini beans", "white beans"),
+    ("cornstarch", "cornflour"),
+    ("celeriac", "celery root"),
+]
+_ALIAS_LOOKUP = {syn: grp[0] for grp in ALIAS_GROUPS for syn in grp}
+
+
+def alias_norm(s: str) -> str:
+    """norm() + canonical synonym substitution (longest phrase first)."""
+    n = norm(s)
+    if n in _ALIAS_LOOKUP:
+        return _ALIAS_LOOKUP[n]
+    for syn in sorted(_ALIAS_LOOKUP, key=len, reverse=True):
+        n = re.sub(r"(?<![a-z])" + re.escape(syn) + r"(?![a-z])", _ALIAS_LOOKUP[syn], n, count=1)
+    return n
+
+
 def similar(a: str, b: str) -> bool:
-    a, b = norm(a), norm(b)
+    a, b = alias_norm(a), alias_norm(b)
     if not a or not b:
         return False
     if a == b:
@@ -585,12 +614,12 @@ class InventoryIndex:
     def __init__(self, names):
         self.entries = []
         for n in names:
-            nn = norm(n)
+            nn = alias_norm(n)
             if nn:
                 self.entries.append((nn, frozenset(nn.split())))
 
     def hit(self, name):
-        nn = norm(name)
+        nn = alias_norm(name)
         if not nn:
             return False
         at = frozenset(nn.split())

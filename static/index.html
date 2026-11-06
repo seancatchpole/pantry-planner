@@ -237,7 +237,7 @@ async function loadPlan() {
           ${r.preference && r.preference.n ? `<span class="badge prefscore">👍${r.preference.ups} 👎${r.preference.downs}</span>` : ''}
         </div>
         <details><summary>ingredients &amp; steps</summary>
-          <ul class="steps">${r.ingredients.map(x=>`<li>${esc(x.qty)} ${esc(x.unit)} ${esc(x.name)}</li>`).join('')}</ul>
+          <ul class="steps">${r.ingredients.map(x=>`<li>${esc(x.qty)} ${esc(x.unit)} ${esc(x.name)}${x.prep ? ` <span class="muted">(${esc(x.prep)})</span>` : ''}</li>`).join('')}</ul>
           <div class="steps">${esc(r.steps)}</div></details>
         <div class="actions">
           <button class="thumb up ${on===1?'on':''}" onclick="vote(${m.plan_id},1)">👍</button>

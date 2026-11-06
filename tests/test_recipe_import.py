@@ -57,7 +57,10 @@ class ParserTests(unittest.TestCase):
         r=ri.normalize(sample(aggregateRating={'ratingValue':'90','bestRating':'100','worstRating':'0','reviewCount':0}))
         self.assertEqual(r['metadata']['rating'],{'value':90,'best':100,'worst':0,'count':None,'review_count':0})
     def test_quantities(self):
-        for text,qty,unit,name in [('1 (28-ounce) can tomatoes',1,'can','tomatoes'),('1½ cups rice',1.5,'cups','rice'),('½ cup rice',.5,'cup','rice'),('1 1/2 cups rice',1.5,'cups','rice'),('1/4 tsp salt',.25,'tsp','salt'),('0 cups stock',0,'cups','stock'),('salt to taste',0,'','salt to taste'),('1–2 cups rice',0,'','1–2 cups rice'),('1/0 cups stock',0,'','1/0 cups stock')]:
+        for text,qty,unit,name in [('1 (28-ounce) can tomatoes',1,'can','tomatoes'),('1½ cups rice',1.5,'cups','rice'),('½ cup rice',.5,'cup','rice'),('1 1/2 cups rice',1.5,'cups','rice'),
+                                   ('1/4 tsp salt',.25,'tsp','salt'),('0 cups stock',0,'cups','stock'),('salt to taste',0,'','salt to taste'),
+                                   ('1–2 cups rice',0,'cups','rice'),  # range: qty stays 0, but unit+name are extracted (raw keeps full text)
+                                   ('1/0 cups stock',0,'','1/0 cups stock')]:  # unparseable qty keeps full text as name
             with self.subTest(text=text):
                 parsed=ri.ingredient(text)
                 self.assertEqual((parsed['qty'],parsed['unit'],parsed['name']),(qty,unit,name))
