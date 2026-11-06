@@ -26,13 +26,23 @@ class IngredientSurgeryTests(unittest.TestCase):
             ("2 1/2 lbs. of raw chicken wings", 'raw chicken wings', ''),
             ("2 slices country bread", 'country bread', ''),
             ("12 to 16 fresh flour or corn tortillas, hot", 'fresh flour or corn tortillas', 'hot'),
-            ("1 1/2 to 2 pounds chuck roast, cut into chunks", 'chuck roast', 'cut into chunks'),
+            ("1 4-to-6-pound duck", 'duck', ''),
+            ("4 (5- to 6-ounce) filet mignon steaks, patted dry", 'filet mignon steaks', 'patted dry'),
+            ("6-ounce halibut fillets, skin removed", 'halibut fillets', 'skin removed'),
+            ("Chopped parsley, for garnish, optional", 'Chopped parsley', 'for garnish, optional'),
+            ("(30 g) vegetable oil", 'vegetable oil', ''),
         ]
         for raw, name, prep in cases:
             out = ingredient(raw)
             self.assertEqual(out['name'], name, raw)
             self.assertEqual(out.get('prep', ''), prep, raw)
             self.assertEqual(out['raw'], raw)  # raw always preserved
+
+    def test_qty_survives_size_parenthetical(self):
+        out = ingredient("4 (5- to 6-ounce) filet mignon steaks, patted dry")
+        self.assertEqual(out['qty'], 4)          # clean qty kept despite range INSIDE parens
+        out2 = ingredient("12 to 16 fresh flour or corn tortillas, hot")
+        self.assertEqual(out2['qty'], 0)         # real qty range stays conservative
 
     def test_ranges_still_conservative(self):
         out = ingredient("1 1/2 to 2 pounds chuck roast, cut into chunks")

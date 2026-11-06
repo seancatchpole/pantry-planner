@@ -213,12 +213,20 @@ def ingredient(raw):
             rest = s[m.end():].strip()
         except (ValueError, ZeroDivisionError):
             pass
-    # Ambiguous ranges are retained intact, not silently over/under-counted.
-    if re.match(r'^\d.*?(?:–|—|-|\bto\b)\s*\d', s):
+    # Ambiguous ranges make qty unreliable -> keep qty 0, but strip the numeric
+    # phrase so the name stays an inventory identity. A size parenthetical after a
+    # clean quantity ("4 (5- to 6-ounce) steaks") is NOT a quantity range: the
+    # range must start in the quantity area (rest right after the parsed qty).
+    REST_RANGE = (r'^(?:\d[\d\s./–—-]*?(?:[-–—]|\b(?:to|or)\b)|[-–—]|\b(?:to|or)\b)'
+                  r'\s*(?:[-–—]\s*)?\d')
+    if re.match(REST_RANGE, rest if m else s):
         qty, rest = 0, raw
-        # strip the leading numeric range ("1 1/2 to 2 ", "12 to 16 ") so the
-        # name stays an inventory identity; qty conservatively stays 0
-        rest = re.sub(r'^\d+(?:\.\d+)?(?:\s+\d+/\d+|\s*(?:[–—-]|to|/)\s*\d+(?:\.\d+)?)*\s*(?:of\s+)?', '', rest)
+        rest = re.sub(r'^(?:\s*(?:\b(?:to|or)\b)?\s*\d+(?:[./]\d+)?\s*(?:[-–—]|\b(?:to|or)\b)*)+', '', rest)
+    elif not m:
+        # measurement adjective before the name: "6-ounce halibut fillets", "8-inch tortillas"
+        m3 = re.match(r'^\d+\s*[-–—]?\s*(?:ounces?|oz|pounds?|lbs?|inch(?:es)?|grams?|kg|cm|liters?|quarts?)\b[-\s]*', rest, re.I)
+        if m3:
+            rest = rest[m3.end():]
     package = re.match(r'^\([^)]*\)\s*', rest)
     if package:
         rest = rest[package.end():]
@@ -236,7 +244,8 @@ def ingredient(raw):
             r'chopped|sliced|diced|minced|trimmed|halved|quartered|peeled|cored|seeded|stemmed|'
             r'zested|juiced|grated|shredded|cubed|cut\b|softened|melted|room temperature|at room|'
             r'cold\b|warm\b|hot\b|low-sodium|reduced-sodium|no-salt|unsalted|sweetened|reserve|'
-            r'loosely|lightly|finely|coarsely|as needed|such as|like\b|preferably|only\b|or\b')
+            r"loosely|lightly|finely|coarsely|as needed|about\b|such as|like\b|preferably|only\b|or\b|"
+            r"skin\b|bone[- ]in\b|boneless\b")
     m = re.search(r'\(|[,;]\s*(?:' + cues + r')', name, re.I)
     if m and m.start() > 0 and name[:m.start()].strip():
         name, prep = name[:m.start()].strip(), name[m.start():].lstrip(',;( ').strip().rstrip(').;')
